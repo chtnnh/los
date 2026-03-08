@@ -44,6 +44,8 @@ type ProjectEntry = {
   title: string;
   description: string;
   dueDate: string;
+  priority: PriorityTag | "";
+  timeline: TimelineTag | "";
   areaTags: LifeArea[];
   attachments: AttachmentLink[];
 };
@@ -62,6 +64,8 @@ type ProjectDraft = {
   title: string;
   description: string;
   dueDate: string;
+  priority: PriorityTag | "";
+  timeline: TimelineTag | "";
   areaTags: LifeArea[];
   attachments: AttachmentLink[];
   attachmentDraft: AttachmentDraft;
@@ -309,6 +313,8 @@ function createEmptyProjectDraft(): ProjectDraft {
     title: "",
     description: "",
     dueDate: "",
+    priority: "",
+    timeline: "",
     areaTags: [],
     attachments: [],
     attachmentDraft: { ...EMPTY_ATTACHMENT_DRAFT },
@@ -521,6 +527,8 @@ function normalizeProject(project: unknown, index: number): ProjectEntry | null 
     title?: string;
     description?: string;
     dueDate?: string;
+    priority?: string;
+    timeline?: string;
     areaTags?: string[];
     attachments?: unknown[];
   };
@@ -534,6 +542,16 @@ function normalizeProject(project: unknown, index: number): ProjectEntry | null 
     title: value.title,
     description: typeof value.description === "string" ? value.description : "",
     dueDate: typeof value.dueDate === "string" ? value.dueDate : "",
+    priority: value.priority === "low" || value.priority === "medium" || value.priority === "high" ? value.priority : "",
+    timeline:
+      value.timeline === "day" ||
+      value.timeline === "week" ||
+      value.timeline === "month" ||
+      value.timeline === "quarter" ||
+      value.timeline === "year" ||
+      value.timeline === "decade"
+        ? value.timeline
+        : "",
     areaTags: Array.isArray(value.areaTags)
       ? value.areaTags.filter((tag): tag is LifeArea =>
           tag === "health" ||
@@ -864,6 +882,8 @@ export default function Home() {
           title: projectDraft.title.trim(),
           description: projectDraft.description.trim(),
           dueDate: projectDraft.dueDate,
+          priority: projectDraft.priority,
+          timeline: projectDraft.timeline,
           areaTags: projectDraft.areaTags,
           attachments: sanitizeAttachments(projectDraft.attachments),
         },
@@ -1957,6 +1977,62 @@ export default function Home() {
                       }}
                     />
                     <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project priority</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
+                          const selected = projectDraft.priority === priority;
+                          return (
+                            <Button
+                              key={`draft-priority-${priority}`}
+                              size="sm"
+                              variant={selected ? "flat" : "bordered"}
+                              className={
+                                selected
+                                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                  : "border-zinc-700 text-zinc-300"
+                              }
+                              onPress={() =>
+                                setProjectDraft((prev) => ({
+                                  ...prev,
+                                  priority: prev.priority === priority ? "" : priority,
+                                }))
+                              }
+                            >
+                              {PRIORITY_LABELS[priority]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project timeline</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
+                          const selected = projectDraft.timeline === timeline;
+                          return (
+                            <Button
+                              key={`draft-timeline-${timeline}`}
+                              size="sm"
+                              variant={selected ? "flat" : "bordered"}
+                              className={
+                                selected
+                                  ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                  : "border-zinc-700 text-zinc-300"
+                              }
+                              onPress={() =>
+                                setProjectDraft((prev) => ({
+                                  ...prev,
+                                  timeline: prev.timeline === timeline ? "" : timeline,
+                                }))
+                              }
+                            >
+                              {TIMELINE_LABELS[timeline]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
                       <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project key areas</p>
                       <div className="flex flex-wrap gap-2">
                         {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
@@ -2169,6 +2245,16 @@ export default function Home() {
                                     due {project.dueDate}
                                   </Chip>
                                 )}
+                                {project.priority && (
+                                  <Chip variant="flat" className="bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    {PRIORITY_LABELS[project.priority]}
+                                  </Chip>
+                                )}
+                                {project.timeline && (
+                                  <Chip variant="flat" className="bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                                    {TIMELINE_LABELS[project.timeline]}
+                                  </Chip>
+                                )}
                                 {project.areaTags.map((area) => (
                                   <Chip key={`${project.id}-view-area-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
                                     {AREA_LABELS[area]}
@@ -2199,11 +2285,79 @@ export default function Home() {
                                 due {project.dueDate}
                               </Chip>
                             )}
+                            {project.priority && (
+                              <Chip variant="flat" className="bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                {PRIORITY_LABELS[project.priority]}
+                              </Chip>
+                            )}
+                            {project.timeline && (
+                              <Chip variant="flat" className="bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                                {TIMELINE_LABELS[project.timeline]}
+                              </Chip>
+                            )}
                             {project.areaTags.map((area) => (
                               <Chip key={`${project.id}-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
                                 {AREA_LABELS[area]}
                               </Chip>
                             ))}
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
+                            <div className="flex flex-wrap gap-2">
+                              {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
+                                const selected = project.priority === priority;
+                                return (
+                                  <Button
+                                    key={`${project.id}-priority-${priority}`}
+                                    size="sm"
+                                    variant={selected ? "flat" : "bordered"}
+                                    className={
+                                      selected
+                                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                        : "border-zinc-700 text-zinc-300"
+                                    }
+                                    onPress={() =>
+                                      updateProject(project.id, (prev) => ({
+                                        ...prev,
+                                        priority: prev.priority === priority ? "" : priority,
+                                      }))
+                                    }
+                                  >
+                                    {PRIORITY_LABELS[priority]}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">timeline</p>
+                            <div className="flex flex-wrap gap-2">
+                              {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
+                                const selected = project.timeline === timeline;
+                                return (
+                                  <Button
+                                    key={`${project.id}-timeline-${timeline}`}
+                                    size="sm"
+                                    variant={selected ? "flat" : "bordered"}
+                                    className={
+                                      selected
+                                        ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                        : "border-zinc-700 text-zinc-300"
+                                    }
+                                    onPress={() =>
+                                      updateProject(project.id, (prev) => ({
+                                        ...prev,
+                                        timeline: prev.timeline === timeline ? "" : timeline,
+                                      }))
+                                    }
+                                  >
+                                    {TIMELINE_LABELS[timeline]}
+                                  </Button>
+                                );
+                              })}
+                            </div>
                           </div>
 
                           <div className="space-y-2">
