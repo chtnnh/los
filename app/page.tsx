@@ -1,6 +1,6 @@
 "use client";
 
-import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Tab, Tabs, Textarea } from "@heroui/react";
+import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent, type MouseEvent } from "react";
 
@@ -15,8 +15,7 @@ function Button({ type, ...props }: SafeButtonProps) {
 type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" | "soul";
 type GoalType = "daily" | "weekly" | "monthly";
 type PriorityTag = "low" | "medium" | "high";
-type TimelineTag = "week" | "month" | "quarter" | "year" | "decade";
-type GoalSortOption = "manual" | "title-asc" | "due-soon" | "priority-high" | "status";
+type TimelineTag = "day" | "week" | "month" | "quarter" | "year" | "decade";
 type ProjectSortOption = "manual" | "title-asc" | "due-soon";
 type AttachmentSource = "url" | "local-file-ref" | "embedded-file";
 
@@ -121,6 +120,7 @@ const PRIORITY_LABELS: Record<PriorityTag, string> = {
 };
 
 const TIMELINE_LABELS: Record<TimelineTag, string> = {
+  day: "Day",
   week: "Week",
   month: "Month",
   quarter: "Quarter",
@@ -128,18 +128,19 @@ const TIMELINE_LABELS: Record<TimelineTag, string> = {
   decade: "Decade",
 };
 
+const TIMELINE_SORT_ORDER: Record<TimelineTag, number> = {
+  day: 0,
+  week: 1,
+  month: 2,
+  quarter: 3,
+  year: 4,
+  decade: 5,
+};
+
 const GOAL_LABELS: Record<GoalType, string> = {
   daily: "Daily",
   weekly: "Weekly",
   monthly: "Monthly",
-};
-
-const GOAL_SORT_LABELS: Record<GoalSortOption, string> = {
-  manual: "Manual",
-  "title-asc": "Title (A-Z)",
-  "due-soon": "Due date (soonest)",
-  "priority-high": "Priority (high first)",
-  status: "Status (open first)",
 };
 
 const PROJECT_SORT_LABELS: Record<ProjectSortOption, string> = {
@@ -352,41 +353,6 @@ function compareDueDate(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-function sortGoalEntries(items: GoalEntry[], sortBy: GoalSortOption): GoalEntry[] {
-  if (sortBy === "manual") {
-    return items;
-  }
-
-  const priorityRank: Record<PriorityTag, number> = { high: 0, medium: 1, low: 2 };
-  const copy = [...items];
-
-  copy.sort((a, b) => {
-    if (sortBy === "title-asc") {
-      return a.title.localeCompare(b.title);
-    }
-    if (sortBy === "due-soon") {
-      return compareDueDate(a.dueDate, b.dueDate);
-    }
-    if (sortBy === "priority-high") {
-      const aRank = a.priority ? priorityRank[a.priority] : 99;
-      const bRank = b.priority ? priorityRank[b.priority] : 99;
-      if (aRank !== bRank) {
-        return aRank - bRank;
-      }
-      return a.title.localeCompare(b.title);
-    }
-    if (sortBy === "status") {
-      if (a.completed !== b.completed) {
-        return Number(a.completed) - Number(b.completed);
-      }
-      return a.title.localeCompare(b.title);
-    }
-    return 0;
-  });
-
-  return copy;
-}
-
 function sortProjectEntries(items: ProjectEntry[], sortBy: ProjectSortOption): ProjectEntry[] {
   if (sortBy === "manual") {
     return items;
@@ -512,7 +478,7 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
     dueDate: typeof value.dueDate === "string" ? value.dueDate : "",
     priority: priority === "low" || priority === "medium" || priority === "high" ? priority : "",
     timeline:
-      timeline === "week" || timeline === "month" || timeline === "quarter" || timeline === "year" || timeline === "decade"
+      timeline === "day" || timeline === "week" || timeline === "month" || timeline === "quarter" || timeline === "year" || timeline === "decade"
         ? timeline
         : "",
     areaTags: Array.isArray(value.areaTags)
@@ -690,7 +656,6 @@ export default function Home() {
   const [activeGoalEditorRef, setActiveGoalEditorRef] = useState<string | null>(null);
   const [projectsEditMode, setProjectsEditMode] = useState(false);
   const [activeProjectEditorId, setActiveProjectEditorId] = useState<string | null>(null);
-  const [goalSort, setGoalSort] = useState<GoalSortOption>("manual");
   const [projectSort, setProjectSort] = useState<ProjectSortOption>("manual");
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
@@ -798,7 +763,7 @@ export default function Home() {
     return visionCount + goalCount + projectCount + otherCount;
   }, [data]);
 
-  const filteredGoals = useMemo(() => {
+  const filteredGoalItems = useMemo(() => {
     const matchesFilter = (goal: GoalEntry) => {
       const areaMatch =
         filters.areaTags.length === 0 || filters.areaTags.some((filterTag) => goal.areaTags.includes(filterTag));
@@ -807,11 +772,26 @@ export default function Home() {
       return areaMatch && projectMatch;
     };
 
-    return {
-      daily: data.goals.daily.filter(matchesFilter),
-      weekly: data.goals.weekly.filter(matchesFilter),
-      monthly: data.goals.monthly.filter(matchesFilter),
-    } satisfies Record<GoalType, GoalEntry[]>;
+    const items = (Object.keys(GOAL_LABELS) as GoalType[])
+      .flatMap((kind) => data.goals[kind].map((goal) => ({ kind, goal })))
+      .filter(({ goal }) => matchesFilter(goal));
+
+    items.sort((a, b) => {
+      const aRank = a.goal.timeline ? TIMELINE_SORT_ORDER[a.goal.timeline] : -1;
+      const bRank = b.goal.timeline ? TIMELINE_SORT_ORDER[b.goal.timeline] : -1;
+      if (aRank !== bRank) {
+        return aRank - bRank;
+      }
+
+      const dueCompare = compareDueDate(a.goal.dueDate, b.goal.dueDate);
+      if (dueCompare !== 0) {
+        return dueCompare;
+      }
+
+      return a.goal.title.localeCompare(b.goal.title);
+    });
+
+    return items;
   }, [data.goals, filters]);
 
   const goalReferenceOptions = useMemo(
@@ -823,15 +803,6 @@ export default function Home() {
         }))
       ),
     [data.goals]
-  );
-
-  const sortedGoals = useMemo(
-    () => ({
-      daily: sortGoalEntries(filteredGoals.daily, goalSort),
-      weekly: sortGoalEntries(filteredGoals.weekly, goalSort),
-      monthly: sortGoalEntries(filteredGoals.monthly, goalSort),
-    }),
-    [filteredGoals, goalSort]
   );
 
   const sortedProjects = useMemo(() => sortProjectEntries(data.projects, projectSort), [data.projects, projectSort]);
@@ -1483,50 +1454,22 @@ export default function Home() {
                       })}
                     </div>
                   )}
-                  <div className="max-w-xs">
-                    <Select
-                      label="sort goals"
-                      labelPlacement="outside"
-                      variant="bordered"
-                      selectedKeys={[goalSort]}
-                      onSelectionChange={(keys) => {
-                        const selected = Array.from(keys as Set<string>)[0] as GoalSortOption | undefined;
-                        if (selected) {
-                          setGoalSort(selected);
-                        }
-                      }}
-                      classNames={{
-                        trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
-                        value: "!text-zinc-100",
-                        label: "text-zinc-400",
-                        selectorIcon: "text-zinc-400",
-                        listboxWrapper: "bg-zinc-900 text-zinc-100",
-                        popoverContent: "bg-zinc-900 border border-zinc-700",
-                      }}
-                    >
-                      {(Object.keys(GOAL_SORT_LABELS) as GoalSortOption[]).map((option) => (
-                        <SelectItem key={option} className="text-zinc-100">
-                          {GOAL_SORT_LABELS[option]}
-                        </SelectItem>
-                      ))}
-                    </Select>
-                  </div>
+                  <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
+                    sorted by timeline (blank first)
+                  </p>
                 </div>
 
-                <Tabs variant="underlined" color="primary">
-                  {(Object.keys(GOAL_LABELS) as GoalType[]).map((kind) => (
-                    <Tab key={kind} title={GOAL_LABELS[kind]}>
-                      <div className="mb-3 mt-1 flex items-center justify-between gap-3">
-                        <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
-                          showing {sortedGoals[kind].length} of {data.goals[kind].length}
-                        </p>
-                        <Button size="sm" variant="flat" className="bg-zinc-800 text-zinc-200" onPress={() => addGoal(kind)}>
-                          add goal
-                        </Button>
-                      </div>
+                <div className="mb-3 mt-1 flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
+                    showing {filteredGoalItems.length} of {Object.values(data.goals).flat().length}
+                  </p>
+                  <Button size="sm" variant="flat" className="bg-zinc-800 text-zinc-200" onPress={() => addGoal("daily")}>
+                    add goal
+                  </Button>
+                </div>
 
-                      <div className="space-y-3">
-                        {sortedGoals[kind].map((goal, idx) => {
+                <div className="space-y-3">
+                        {filteredGoalItems.map(({ kind, goal }, idx) => {
                           const draftKey = goalDraftKey(kind, goal.id);
                           const draft = goalAttachmentDrafts[draftKey] ?? EMPTY_ATTACHMENT_DRAFT;
                           const goalRef = `${kind}:${goal.id}`;
@@ -1913,15 +1856,12 @@ export default function Home() {
                           );
                         })}
 
-                        {sortedGoals[kind].length === 0 && (
+                        {filteredGoalItems.length === 0 && (
                           <p className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">
                             no goals match your current filters.
                           </p>
                         )}
                       </div>
-                    </Tab>
-                  ))}
-                </Tabs>
                 </CardBody>
               )}
             </Card>
