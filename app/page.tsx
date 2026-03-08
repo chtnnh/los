@@ -1,8 +1,8 @@
 "use client";
 
-import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Tab, Tabs, Textarea } from "@heroui/react";
+import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Tab, Tabs, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
 type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" | "soul";
 type GoalType = "daily" | "weekly" | "monthly";
@@ -74,6 +74,13 @@ type LifeData = {
 };
 
 const STORAGE_KEY = "life-os-data-v1";
+const SETTINGS_STORAGE_KEY = "life-os-settings-v1";
+
+type AppSettings = {
+  autosaveEnabled: boolean;
+  autosaveSeconds: number;
+  showAutosaveToast: boolean;
+};
 
 const AREA_LABELS: Record<LifeArea, string> = {
   health: "Health",
@@ -232,6 +239,39 @@ const defaultData: LifeData = {
   todayFocus: "",
   energyPlan: "",
 };
+
+const defaultSettings: AppSettings = {
+  autosaveEnabled: true,
+  autosaveSeconds: 60,
+  showAutosaveToast: false,
+};
+
+function clampAutosaveSeconds(seconds: number): number {
+  return Math.min(600, Math.max(15, seconds));
+}
+
+function normalizeSettings(parsed: unknown): AppSettings {
+  if (!parsed || typeof parsed !== "object") {
+    return defaultSettings;
+  }
+
+  const value = parsed as {
+    autosaveEnabled?: unknown;
+    autosaveSeconds?: unknown;
+    showAutosaveToast?: unknown;
+  };
+
+  const interval =
+    typeof value.autosaveSeconds === "number" && Number.isFinite(value.autosaveSeconds)
+      ? clampAutosaveSeconds(Math.round(value.autosaveSeconds))
+      : defaultSettings.autosaveSeconds;
+
+  return {
+    autosaveEnabled: typeof value.autosaveEnabled === "boolean" ? value.autosaveEnabled : defaultSettings.autosaveEnabled,
+    autosaveSeconds: interval,
+    showAutosaveToast: typeof value.showAutosaveToast === "boolean" ? value.showAutosaveToast : defaultSettings.showAutosaveToast,
+  };
+}
 
 function normalizeAttachment(attachment: unknown, index: number): AttachmentLink | null {
   if (typeof attachment === "string") {
@@ -479,6 +519,7 @@ function attachmentIsLink(attachment: AttachmentLink): boolean {
 
 export default function Home() {
   const [data, setData] = useState<LifeData>(defaultData);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [filters, setFilters] = useState<GoalFilters>({ areaTags: [], projectIds: [] });
   const [projectDraft, setProjectDraft] = useState<ProjectDraft>(createEmptyProjectDraft);
   const [goalAttachmentDrafts, setGoalAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
@@ -489,18 +530,27 @@ export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
 
   const filePickerRef = useRef<HTMLInputElement | null>(null);
+  const dataRef = useRef<LifeData>(defaultData);
+  const hasUnsavedRef = useRef(false);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       const loadedData = raw ? normalizeData(JSON.parse(raw) as unknown) : defaultData;
       setData(loadedData);
+      dataRef.current = loadedData;
       setLastSavedSnapshot(JSON.stringify(loadedData));
+
+      const rawSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      setSettings(rawSettings ? normalizeSettings(JSON.parse(rawSettings) as unknown) : defaultSettings);
     } catch {
       setData(defaultData);
+      dataRef.current = defaultData;
       setLastSavedSnapshot(JSON.stringify(defaultData));
+      setSettings(defaultSettings);
     } finally {
       setIsLoaded(true);
     }
@@ -522,6 +572,22 @@ export default function Home() {
 
     return JSON.stringify(data) !== lastSavedSnapshot;
   }, [data, isLoaded, lastSavedSnapshot]);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  useEffect(() => {
+    hasUnsavedRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    if (!isLoaded) {
+      return;
+    }
+
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  }, [isLoaded, settings]);
 
   const filledCount = useMemo(() => {
     const visionCount = Object.values(data.visions).filter((v) => v.trim().length > 0).length;
@@ -654,21 +720,50 @@ export default function Home() {
     }));
   };
 
-  const saveChanges = () => {
-    const safeData = sanitizeDataForStorage(data);
-    const serialized = JSON.stringify(safeData);
+  const persistData = useCallback(
+    (sourceData: LifeData, mode: "manual" | "autosave") => {
+      const safeData = sanitizeDataForStorage(sourceData);
+      const serialized = JSON.stringify(safeData);
 
-    localStorage.setItem(STORAGE_KEY, serialized);
-    setData(safeData);
-    setLastSavedSnapshot(serialized);
-    setLastSavedAt(
-      new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    );
-    setToastMessage("saved to your browser storage");
+      localStorage.setItem(STORAGE_KEY, serialized);
+      setData(safeData);
+      dataRef.current = safeData;
+      setLastSavedSnapshot(serialized);
+      setLastSavedAt(
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+
+      if (mode === "manual") {
+        setToastMessage("saved to your browser storage");
+      } else if (settings.showAutosaveToast) {
+        setToastMessage("autosaved");
+      }
+    },
+    [settings.showAutosaveToast]
+  );
+
+  const saveChanges = () => {
+    persistData(dataRef.current, "manual");
   };
+
+  useEffect(() => {
+    if (!isLoaded || !settings.autosaveEnabled) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      if (!hasUnsavedRef.current) {
+        return;
+      }
+
+      persistData(dataRef.current, "autosave");
+    }, settings.autosaveSeconds * 1000);
+
+    return () => clearInterval(timer);
+  }, [isLoaded, persistData, settings.autosaveEnabled, settings.autosaveSeconds]);
 
   const goalDraftKey = (kind: GoalType, goalId: string) => `${kind}:${goalId}`;
 
@@ -866,6 +961,7 @@ export default function Home() {
             >
               save changes
             </Button>
+            {/* 
             <Button
               size="sm"
               variant="flat"
@@ -874,6 +970,71 @@ export default function Home() {
             >
               reset
             </Button>
+            */}
+            <div className="relative">
+              <Button
+                size="md"
+                variant="flat"
+                isIconOnly
+                aria-label="settings"
+                className="h-12 w-12 border-0 bg-zinc-700 text-zinc-100 shadow-none"
+                onPress={() => setShowSettingsMenu((prev) => !prev)}
+              >
+                <span className="text-2xl leading-none">⚙</span>
+              </Button>
+
+              {showSettingsMenu && (
+                <div className="absolute right-0 top-11 z-40 w-80 space-y-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4 shadow-xl">
+                  <p className="text-sm font-medium text-zinc-200">settings</p>
+
+                  <Switch
+                    isSelected={settings.autosaveEnabled}
+                    onValueChange={(value) => setSettings((prev) => ({ ...prev, autosaveEnabled: value }))}
+                    classNames={{ label: "text-zinc-200" }}
+                  >
+                    autosave enabled
+                  </Switch>
+
+                  <Select
+                    label="autosave interval"
+                    labelPlacement="outside"
+                    variant="bordered"
+                    selectedKeys={[String(settings.autosaveSeconds)]}
+                    renderValue={(items) => (
+                      <span className="text-zinc-100">{items.map((item) => item.textValue).join(", ")}</span>
+                    )}
+                    onSelectionChange={(keys) => {
+                      const selected = Array.from(keys as Set<string>)[0]?.toString() ?? String(defaultSettings.autosaveSeconds);
+                      const parsed = Number.parseInt(selected, 10);
+                      if (!Number.isNaN(parsed)) {
+                        setSettings((prev) => ({ ...prev, autosaveSeconds: clampAutosaveSeconds(parsed) }));
+                      }
+                    }}
+                    classNames={{
+                      trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "!text-zinc-100",
+                      label: "text-zinc-400",
+                      selectorIcon: "text-zinc-400",
+                      listboxWrapper: "bg-zinc-900 text-zinc-100",
+                      popoverContent: "bg-zinc-900 border border-zinc-700",
+                    }}
+                  >
+                    <SelectItem key="30" className="text-zinc-100">every 30 seconds</SelectItem>
+                    <SelectItem key="60" className="text-zinc-100">every 1 minute</SelectItem>
+                    <SelectItem key="120" className="text-zinc-100">every 2 minutes</SelectItem>
+                    <SelectItem key="300" className="text-zinc-100">every 5 minutes</SelectItem>
+                  </Select>
+
+                  <Switch
+                    isSelected={settings.showAutosaveToast}
+                    onValueChange={(value) => setSettings((prev) => ({ ...prev, showAutosaveToast: value }))}
+                    classNames={{ label: "text-zinc-200" }}
+                  >
+                    show autosave toasts
+                  </Switch>
+                </div>
+              )}
+            </div>
             {lastSavedAt && <span className="text-xs text-zinc-500">last saved {lastSavedAt}</span>}
           </div>
         </motion.div>
@@ -1607,8 +1768,8 @@ export default function Home() {
                       setData((prev) => ({ ...prev, todayGoalRef: selected }));
                     }}
                     classNames={{
-                      trigger: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                      value: "text-zinc-100",
+                      trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "!text-zinc-100",
                       label: "text-zinc-400",
                       selectorIcon: "text-zinc-400",
                       listboxWrapper: "bg-zinc-900 text-zinc-100",
@@ -1616,7 +1777,9 @@ export default function Home() {
                     }}
                   >
                     {goalReferenceOptions.map((goalOption) => (
-                      <SelectItem key={goalOption.ref}>{goalOption.label}</SelectItem>
+                      <SelectItem key={goalOption.ref} className="text-zinc-100">
+                        {goalOption.label}
+                      </SelectItem>
                     ))}
                   </Select>
 
@@ -1634,8 +1797,8 @@ export default function Home() {
                       setData((prev) => ({ ...prev, todayProjectId: selected }));
                     }}
                     classNames={{
-                      trigger: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                      value: "text-zinc-100",
+                      trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "!text-zinc-100",
                       label: "text-zinc-400",
                       selectorIcon: "text-zinc-400",
                       listboxWrapper: "bg-zinc-900 text-zinc-100",
@@ -1643,7 +1806,9 @@ export default function Home() {
                     }}
                   >
                     {data.projects.map((project) => (
-                      <SelectItem key={project.id}>{project.title}</SelectItem>
+                      <SelectItem key={project.id} className="text-zinc-100">
+                        {project.title}
+                      </SelectItem>
                     ))}
                   </Select>
                 </div>
