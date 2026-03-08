@@ -1,14 +1,22 @@
 "use client";
 
-import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Tab, Tabs, Textarea } from "@heroui/react";
+import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Tab, Tabs, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent } from "react";
+
+type SafeButtonProps = ComponentProps<typeof HeroButton> & {
+  type?: "button" | "submit" | "reset";
+};
+
+function Button({ type, ...props }: SafeButtonProps) {
+  return <HeroButton {...props} type={type ?? "button"} />;
+}
 
 type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" | "soul";
 type GoalType = "daily" | "weekly" | "monthly";
 type PriorityTag = "low" | "medium" | "high";
 type TimelineTag = "week" | "month" | "quarter" | "year" | "decade";
-type AttachmentSource = "url" | "local-file-ref";
+type AttachmentSource = "url" | "local-file-ref" | "embedded-file";
 
 type AttachmentLink = {
   id: string;
@@ -75,6 +83,8 @@ type LifeData = {
 
 const STORAGE_KEY = "life-os-data-v1";
 const SETTINGS_STORAGE_KEY = "life-os-settings-v1";
+const MAX_SINGLE_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+const MAX_UPLOAD_BATCH_BYTES = 3 * 1024 * 1024;
 
 type AppSettings = {
   autosaveEnabled: boolean;
@@ -131,15 +141,62 @@ function toggleInArray<T>(items: T[], value: T): T[] {
   return items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
 }
 
-function sanitizeAttachmentUrl(raw: string): string {
+function normalizeLocalFilePathToUrl(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    return `file:///${encodeURI(normalized)}`;
+  }
+  return `file://${encodeURI(normalized)}`;
+}
+
+function normalizeAttachmentInput(raw: string): string {
   const value = raw.trim();
   if (!value) {
     return "";
   }
 
-  const lower = value.toLowerCase();
-  if (lower.startsWith("javascript:") || lower.startsWith("data:")) {
+  const isUnixAbsolutePath = value.startsWith("/");
+  const isWindowsAbsolutePath = /^[a-zA-Z]:[\\/]/.test(value);
+  if (isUnixAbsolutePath || isWindowsAbsolutePath) {
+    return normalizeLocalFilePathToUrl(value);
+  }
+
+  const hasScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(value);
+  if (hasScheme || value.startsWith("//")) {
+    return value.startsWith("//") ? `https:${value}` : value;
+  }
+
+  // Accept plain domains like "example.com/path" by defaulting to https.
+  const looksLikeDomain = /^[\w.-]+\.[a-z]{2,}([/?#].*)?$/i.test(value);
+  return looksLikeDomain ? `https://${value}` : value;
+}
+
+function isSafeDataUrl(value: string): boolean {
+  const match = value.match(/^data:([^;,]+)(;base64)?,/i);
+  if (!match) {
+    return false;
+  }
+
+  const mime = match[1].toLowerCase();
+  const isBase64 = Boolean(match[2]);
+  const blockedMimeTypes = new Set(["text/html", "application/xhtml+xml", "image/svg+xml"]);
+
+  return isBase64 && !blockedMimeTypes.has(mime);
+}
+
+function sanitizeAttachmentUrl(raw: string): string {
+  const value = normalizeAttachmentInput(raw);
+  if (!value) {
     return "";
+  }
+
+  const lower = value.toLowerCase();
+  if (lower.startsWith("javascript:")) {
+    return "";
+  }
+
+  if (lower.startsWith("data:")) {
+    return isSafeDataUrl(value) ? value : "";
   }
 
   if (
@@ -162,7 +219,11 @@ function sanitizeAttachment(attachment: AttachmentLink): AttachmentLink | null {
     return null;
   }
 
-  const source: AttachmentSource = safeUrl.startsWith("local-file://") ? "local-file-ref" : "url";
+  const source: AttachmentSource = safeUrl.startsWith("local-file://")
+    ? "local-file-ref"
+    : safeUrl.startsWith("data:")
+      ? "embedded-file"
+      : "url";
 
   return {
     id: attachment.id,
@@ -178,12 +239,27 @@ function sanitizeAttachments(attachments: AttachmentLink[]): AttachmentLink[] {
     .filter((attachment): attachment is AttachmentLink => attachment !== null);
 }
 
-function fileToAttachment(file: File): AttachmentLink {
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToAttachment(file: File): Promise<AttachmentLink | null> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const safeUrl = sanitizeAttachmentUrl(dataUrl);
+  if (!safeUrl) {
+    return null;
+  }
+
   return {
     id: createId("attachment"),
     label: file.name,
-    url: `local-file://${encodeURIComponent(file.name)}`,
-    source: "local-file-ref",
+    url: safeUrl,
+    source: "embedded-file",
   };
 }
 
@@ -306,7 +382,11 @@ function normalizeAttachment(attachment: unknown, index: number): AttachmentLink
   }
 
   const source: AttachmentSource =
-    value.source === "local-file-ref" || safeUrl.startsWith("local-file://") ? "local-file-ref" : "url";
+    value.source === "embedded-file" || safeUrl.startsWith("data:")
+      ? "embedded-file"
+      : value.source === "local-file-ref" || safeUrl.startsWith("local-file://")
+        ? "local-file-ref"
+        : "url";
 
   return {
     id: typeof value.id === "string" && value.id.length > 0 ? value.id : `attachment-${index + 1}`,
@@ -514,10 +594,6 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
   };
 }
 
-function attachmentIsLink(attachment: AttachmentLink): boolean {
-  return attachment.url.startsWith("http://") || attachment.url.startsWith("https://") || attachment.url.startsWith("file://");
-}
-
 export default function Home() {
   const [data, setData] = useState<LifeData>(defaultData);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
@@ -566,6 +642,12 @@ export default function Home() {
       note: nextCollapsed,
     });
   }, [allSectionsCollapsed]);
+
+  const preventEnterSubmit = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -753,24 +835,28 @@ export default function Home() {
 
   const persistData = useCallback(
     (sourceData: LifeData, mode: "manual" | "autosave") => {
-      const safeData = sanitizeDataForStorage(sourceData);
-      const serialized = JSON.stringify(safeData);
+      try {
+        const safeData = sanitizeDataForStorage(sourceData);
+        const serialized = JSON.stringify(safeData);
 
-      localStorage.setItem(STORAGE_KEY, serialized);
-      setData(safeData);
-      dataRef.current = safeData;
-      setLastSavedSnapshot(serialized);
-      setLastSavedAt(
-        new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      );
+        localStorage.setItem(STORAGE_KEY, serialized);
+        setData(safeData);
+        dataRef.current = safeData;
+        setLastSavedSnapshot(serialized);
+        setLastSavedAt(
+          new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        );
 
-      if (mode === "manual") {
-        setToastMessage("saved to your browser storage");
-      } else if (settings.showAutosaveToast) {
-        setToastMessage("autosaved");
+        if (mode === "manual") {
+          setToastMessage("saved to your browser storage");
+        } else if (settings.showAutosaveToast) {
+          setToastMessage("autosaved");
+        }
+      } catch {
+        setToastMessage("save failed. storage is full or blocked.");
       }
     },
     [settings.showAutosaveToast]
@@ -812,14 +898,26 @@ export default function Home() {
     const safeUrl = sanitizeAttachmentUrl(draft.url);
 
     if (!safeUrl) {
-      setToastMessage("attachment link must start with https://, http://, file://, or local-file://");
+      setToastMessage("enter a valid link (https/file) or a plain domain like example.com");
       return;
     }
 
     const label = draft.label.trim() || safeUrl.replace(/^https?:\/\//, "").slice(0, 40);
     updateGoal(kind, goalId, (goal) => ({
       ...goal,
-      attachments: [...goal.attachments, { id: createId("goal-attachment"), label, url: safeUrl, source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url" }],
+      attachments: [
+        ...goal.attachments,
+        {
+          id: createId("goal-attachment"),
+          label,
+          url: safeUrl,
+          source: safeUrl.startsWith("data:")
+            ? "embedded-file"
+            : safeUrl.startsWith("local-file://")
+              ? "local-file-ref"
+              : "url",
+        },
+      ],
     }));
 
     setGoalAttachmentDrafts((prev) => ({
@@ -840,7 +938,7 @@ export default function Home() {
     const safeUrl = sanitizeAttachmentUrl(draft.url);
 
     if (!safeUrl) {
-      setToastMessage("attachment link must start with https://, http://, file://, or local-file://");
+      setToastMessage("enter a valid link (https/file) or a plain domain like example.com");
       return;
     }
 
@@ -853,7 +951,11 @@ export default function Home() {
           id: createId("project-attachment"),
           label,
           url: safeUrl,
-          source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url",
+          source: safeUrl.startsWith("data:")
+            ? "embedded-file"
+            : safeUrl.startsWith("local-file://")
+              ? "local-file-ref"
+              : "url",
         },
       ],
     }));
@@ -875,7 +977,7 @@ export default function Home() {
     const safeUrl = sanitizeAttachmentUrl(projectDraft.attachmentDraft.url);
 
     if (!safeUrl) {
-      setToastMessage("attachment link must start with https://, http://, file://, or local-file://");
+      setToastMessage("enter a valid link (https/file) or a plain domain like example.com");
       return;
     }
 
@@ -889,7 +991,11 @@ export default function Home() {
           id: createId("project-draft-attachment"),
           label,
           url: safeUrl,
-          source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url",
+          source: safeUrl.startsWith("data:")
+            ? "embedded-file"
+            : safeUrl.startsWith("local-file://")
+              ? "local-file-ref"
+              : "url",
         },
       ],
       attachmentDraft: { ...EMPTY_ATTACHMENT_DRAFT },
@@ -908,7 +1014,7 @@ export default function Home() {
     filePickerRef.current?.click();
   };
 
-  const handleAttachmentFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleAttachmentFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = "";
 
@@ -916,37 +1022,91 @@ export default function Home() {
       return;
     }
 
-    const attachments = files.map(fileToAttachment);
+    try {
+      const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+      if (totalBytes > MAX_UPLOAD_BATCH_BYTES) {
+        setToastMessage("upload batch is too large for browser storage");
+        return;
+      }
 
-    if (uploadTarget.entity === "goal") {
-      updateGoal(uploadTarget.kind, uploadTarget.goalId, (goal) => ({
-        ...goal,
-        attachments: [...goal.attachments, ...attachments],
-      }));
+      const oversized = files.find((file) => file.size > MAX_SINGLE_ATTACHMENT_BYTES);
+      if (oversized) {
+        setToastMessage(`${oversized.name} is too large. keep files under 2MB.`);
+        return;
+      }
+
+      const converted = await Promise.all(files.map((file) => fileToAttachment(file)));
+      const attachments = converted.filter((attachment): attachment is AttachmentLink => attachment !== null);
+      if (attachments.length === 0) {
+        setToastMessage("those files couldn’t be attached");
+        return;
+      }
+
+      if (uploadTarget.entity === "goal") {
+        updateGoal(uploadTarget.kind, uploadTarget.goalId, (goal) => ({
+          ...goal,
+          attachments: [...goal.attachments, ...attachments],
+        }));
+      }
+
+      if (uploadTarget.entity === "project") {
+        updateProject(uploadTarget.projectId, (project) => ({
+          ...project,
+          attachments: [...project.attachments, ...attachments],
+        }));
+      }
+
+      if (uploadTarget.entity === "project-draft") {
+        setProjectDraft((prev) => ({
+          ...prev,
+          attachments: [...prev.attachments, ...attachments],
+        }));
+      }
+
+      setToastMessage(`${attachments.length} attachment${attachments.length > 1 ? "s" : ""} added`);
+    } catch {
+      setToastMessage("couldn’t attach file. try a smaller file or link.");
+    } finally {
+      setUploadTarget(null);
+    }
+  };
+
+  const openAttachment = (attachment: AttachmentLink) => {
+    const openFileUrl = (rawUrl: string) => {
+      const normalizedUrl = rawUrl.startsWith("file:///")
+        ? rawUrl
+        : rawUrl.startsWith("file://")
+          ? `file:///${rawUrl.replace(/^file:\/+/, "")}`
+          : rawUrl;
+
+      const opened = window.open(normalizedUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        setToastMessage("browser blocked local-file opening. allow popups for localhost.");
+      }
+    };
+
+    if (attachment.url.startsWith("https://") || attachment.url.startsWith("http://") || attachment.url.startsWith("data:")) {
+      window.open(attachment.url, "_blank", "noopener,noreferrer");
+      return;
     }
 
-    if (uploadTarget.entity === "project") {
-      updateProject(uploadTarget.projectId, (project) => ({
-        ...project,
-        attachments: [...project.attachments, ...attachments],
-      }));
+    if (attachment.url.startsWith("file://")) {
+      openFileUrl(attachment.url);
+      return;
     }
 
-    if (uploadTarget.entity === "project-draft") {
-      setProjectDraft((prev) => ({
-        ...prev,
-        attachments: [...prev.attachments, ...attachments],
-      }));
+    if (attachment.url.startsWith("local-file://")) {
+      const guessedPath = decodeURIComponent(attachment.url.replace("local-file://", ""));
+      openFileUrl(`file:///${guessedPath.replace(/^\/+/, "")}`);
+      return;
     }
 
-    setUploadTarget(null);
-    setToastMessage(`${attachments.length} local file reference${attachments.length > 1 ? "s" : ""} added`);
+    setToastMessage("this attachment format cannot be opened yet");
   };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-[family-name:var(--font-space-grotesk)]">
       <input ref={filePickerRef} type="file" multiple className="hidden" onChange={handleAttachmentFileUpload} />
-
       {toastMessage && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -1408,6 +1568,7 @@ export default function Home() {
                                     <Input
                                       variant="bordered"
                                       value={draft.label}
+                                      onKeyDown={preventEnterSubmit}
                                       onValueChange={(value) =>
                                         setGoalAttachmentDraft(kind, goal.id, (prev) => ({ ...prev, label: value }))
                                       }
@@ -1420,10 +1581,11 @@ export default function Home() {
                                     <Input
                                       variant="bordered"
                                       value={draft.url}
+                                      onKeyDown={preventEnterSubmit}
                                       onValueChange={(value) =>
                                         setGoalAttachmentDraft(kind, goal.id, (prev) => ({ ...prev, url: value }))
                                       }
-                                      placeholder="https://... or file://..."
+                                      placeholder="https://... or /Users/.../file.pdf"
                                       classNames={{
                                         inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
                                         input: "text-zinc-100 placeholder:text-zinc-500",
@@ -1432,20 +1594,30 @@ export default function Home() {
                                   </div>
                                   <div className="flex flex-wrap gap-2">
                                     <Button
+                                      type="button"
                                       size="sm"
                                       variant="flat"
                                       className="bg-zinc-800 text-zinc-200"
-                                      onPress={() => addGoalAttachmentLink(kind, goal.id)}
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        addGoalAttachmentLink(kind, goal.id);
+                                      }}
                                     >
                                       add link
                                     </Button>
                                     <Button
+                                      type="button"
                                       size="sm"
                                       variant="flat"
                                       className="bg-zinc-800 text-zinc-200"
-                                      onPress={() => openFileUpload({ entity: "goal", kind, goalId: goal.id })}
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        openFileUpload({ entity: "goal", kind, goalId: goal.id });
+                                      }}
                                     >
-                                      upload file ref
+                                      upload file
                                     </Button>
                                   </div>
                                   <div className="flex flex-wrap gap-2">
@@ -1454,18 +1626,13 @@ export default function Home() {
                                         key={attachment.id}
                                         className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
                                       >
-                                        {attachmentIsLink(attachment) ? (
-                                          <a
-                                            href={attachment.url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-xs text-zinc-200 underline decoration-zinc-600"
-                                          >
-                                            {attachment.label}
-                                          </a>
-                                        ) : (
-                                          <span className="text-xs text-zinc-300">{attachment.label}</span>
-                                        )}
+                                        <button
+                                          type="button"
+                                          className="text-xs text-zinc-200 underline decoration-zinc-600"
+                                          onClick={() => openAttachment(attachment)}
+                                        >
+                                          {attachment.label}
+                                        </button>
                                         <Button
                                           size="sm"
                                           variant="light"
@@ -1603,6 +1770,7 @@ export default function Home() {
                         <Input
                           variant="bordered"
                           value={projectDraft.attachmentDraft.label}
+                          onKeyDown={preventEnterSubmit}
                           onValueChange={(value) =>
                             setProjectDraft((prev) => ({
                               ...prev,
@@ -1618,13 +1786,14 @@ export default function Home() {
                         <Input
                           variant="bordered"
                           value={projectDraft.attachmentDraft.url}
+                          onKeyDown={preventEnterSubmit}
                           onValueChange={(value) =>
                             setProjectDraft((prev) => ({
                               ...prev,
                               attachmentDraft: { ...prev.attachmentDraft, url: value },
                             }))
                           }
-                          placeholder="https://... or file://..."
+                          placeholder="https://... or /Users/.../file.pdf"
                           classNames={{
                             inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
                             input: "text-zinc-100 placeholder:text-zinc-500",
@@ -1633,20 +1802,30 @@ export default function Home() {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button
+                          type="button"
                           size="sm"
                           variant="flat"
                           className="bg-zinc-800 text-zinc-200"
-                          onPress={addProjectDraftAttachmentLink}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            addProjectDraftAttachmentLink();
+                          }}
                         >
                           add link
                         </Button>
                         <Button
+                          type="button"
                           size="sm"
                           variant="flat"
                           className="bg-zinc-800 text-zinc-200"
-                          onPress={() => openFileUpload({ entity: "project-draft" })}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openFileUpload({ entity: "project-draft" });
+                          }}
                         >
-                          upload file ref
+                          upload file
                         </Button>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -1655,18 +1834,13 @@ export default function Home() {
                             key={attachment.id}
                             className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
                           >
-                            {attachmentIsLink(attachment) ? (
-                              <a
-                                href={attachment.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-xs text-zinc-200 underline decoration-zinc-600"
-                              >
-                                {attachment.label}
-                              </a>
-                            ) : (
-                              <span className="text-xs text-zinc-300">{attachment.label}</span>
-                            )}
+                            <button
+                              type="button"
+                              className="text-xs text-zinc-200 underline decoration-zinc-600"
+                              onClick={() => openAttachment(attachment)}
+                            >
+                              {attachment.label}
+                            </button>
                             <Button
                               size="sm"
                               variant="light"
@@ -1732,6 +1906,7 @@ export default function Home() {
                               <Input
                                 variant="bordered"
                                 value={draft.label}
+                                onKeyDown={preventEnterSubmit}
                                 onValueChange={(value) =>
                                   setProjectAttachmentDrafts((prev) => ({
                                     ...prev,
@@ -1747,13 +1922,14 @@ export default function Home() {
                               <Input
                                 variant="bordered"
                                 value={draft.url}
+                                onKeyDown={preventEnterSubmit}
                                 onValueChange={(value) =>
                                   setProjectAttachmentDrafts((prev) => ({
                                     ...prev,
                                     [project.id]: { ...draft, url: value },
                                   }))
                                 }
-                                placeholder="https://... or file://..."
+                                placeholder="https://... or /Users/.../file.pdf"
                                 classNames={{
                                   inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
                                   input: "text-zinc-100 placeholder:text-zinc-500",
@@ -1762,20 +1938,30 @@ export default function Home() {
                             </div>
                             <div className="flex flex-wrap gap-2">
                               <Button
+                                type="button"
                                 size="sm"
                                 variant="flat"
                                 className="bg-zinc-800 text-zinc-200"
-                                onPress={() => addProjectAttachmentLink(project.id)}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  addProjectAttachmentLink(project.id);
+                                }}
                               >
                                 add link
                               </Button>
                               <Button
+                                type="button"
                                 size="sm"
                                 variant="flat"
                                 className="bg-zinc-800 text-zinc-200"
-                                onPress={() => openFileUpload({ entity: "project", projectId: project.id })}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  openFileUpload({ entity: "project", projectId: project.id });
+                                }}
                               >
-                                upload file ref
+                                upload file
                               </Button>
                             </div>
                             <div className="flex flex-wrap gap-2">
@@ -1784,18 +1970,13 @@ export default function Home() {
                                   key={attachment.id}
                                   className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
                                 >
-                                  {attachmentIsLink(attachment) ? (
-                                    <a
-                                      href={attachment.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="text-xs text-zinc-200 underline decoration-zinc-600"
-                                    >
-                                      {attachment.label}
-                                    </a>
-                                  ) : (
-                                    <span className="text-xs text-zinc-300">{attachment.label}</span>
-                                  )}
+                                  <button
+                                    type="button"
+                                    className="text-xs text-zinc-200 underline decoration-zinc-600"
+                                    onClick={() => openAttachment(attachment)}
+                                  >
+                                    {attachment.label}
+                                  </button>
                                   <Button
                                     size="sm"
                                     variant="light"
