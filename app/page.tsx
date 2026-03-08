@@ -2,12 +2,20 @@
 
 import { Button, Card, CardBody, CardHeader, Chip, Input, Tab, Tabs, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
 type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" | "soul";
 type GoalType = "daily" | "weekly" | "monthly";
 type PriorityTag = "low" | "medium" | "high";
 type TimelineTag = "week" | "month" | "quarter" | "year" | "decade";
+type AttachmentSource = "url" | "local-file-ref";
+
+type AttachmentLink = {
+  id: string;
+  label: string;
+  url: string;
+  source: AttachmentSource;
+};
 
 type GoalEntry = {
   id: string;
@@ -18,6 +26,7 @@ type GoalEntry = {
   timeline: TimelineTag | "";
   areaTags: LifeArea[];
   projectIds: string[];
+  attachments: AttachmentLink[];
 };
 
 type ProjectEntry = {
@@ -26,12 +35,33 @@ type ProjectEntry = {
   description: string;
   dueDate: string;
   areaTags: LifeArea[];
+  attachments: AttachmentLink[];
 };
 
 type GoalFilters = {
   areaTags: LifeArea[];
   projectIds: string[];
 };
+
+type AttachmentDraft = {
+  label: string;
+  url: string;
+};
+
+type ProjectDraft = {
+  title: string;
+  description: string;
+  dueDate: string;
+  areaTags: LifeArea[];
+  attachments: AttachmentLink[];
+  attachmentDraft: AttachmentDraft;
+};
+
+type UploadTarget =
+  | { entity: "goal"; kind: GoalType; goalId: string }
+  | { entity: "project"; projectId: string }
+  | { entity: "project-draft" }
+  | null;
 
 type LifeData = {
   visions: Record<LifeArea, string>;
@@ -81,8 +111,70 @@ const GOAL_LABELS: Record<GoalType, string> = {
   monthly: "Monthly",
 };
 
+const EMPTY_ATTACHMENT_DRAFT: AttachmentDraft = { label: "", url: "" };
+
+function createId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function toggleInArray<T>(items: T[], value: T): T[] {
   return items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
+}
+
+function sanitizeAttachmentUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    return "";
+  }
+
+  const lower = value.toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("data:")) {
+    return "";
+  }
+
+  if (
+    lower.startsWith("https://") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("file://") ||
+    lower.startsWith("local-file://")
+  ) {
+    return value;
+  }
+
+  return "";
+}
+
+function sanitizeAttachment(attachment: AttachmentLink): AttachmentLink | null {
+  const safeUrl = sanitizeAttachmentUrl(attachment.url);
+  const label = attachment.label.trim();
+
+  if (!safeUrl || !label) {
+    return null;
+  }
+
+  const source: AttachmentSource = safeUrl.startsWith("local-file://") ? "local-file-ref" : "url";
+
+  return {
+    id: attachment.id,
+    label,
+    url: safeUrl,
+    source,
+  };
+}
+
+function sanitizeAttachments(attachments: AttachmentLink[]): AttachmentLink[] {
+  return attachments
+    .map((attachment) => sanitizeAttachment(attachment))
+    .filter((attachment): attachment is AttachmentLink => attachment !== null);
+}
+
+function fileToAttachment(file: File): AttachmentLink {
+  return {
+    id: createId("attachment"),
+    label: file.name,
+    url: `local-file://${encodeURIComponent(file.name)}`,
+    source: "local-file-ref",
+  };
 }
 
 function createEmptyGoal(id: string): GoalEntry {
@@ -95,6 +187,7 @@ function createEmptyGoal(id: string): GoalEntry {
     timeline: "",
     areaTags: [],
     projectIds: [],
+    attachments: [],
   };
 }
 
@@ -104,6 +197,17 @@ function createDefaultGoals(kind: GoalType): GoalEntry[] {
     createEmptyGoal(`${kind}-2`),
     createEmptyGoal(`${kind}-3`),
   ];
+}
+
+function createEmptyProjectDraft(): ProjectDraft {
+  return {
+    title: "",
+    description: "",
+    dueDate: "",
+    areaTags: [],
+    attachments: [],
+    attachmentDraft: { ...EMPTY_ATTACHMENT_DRAFT },
+  };
 }
 
 const defaultData: LifeData = {
@@ -124,6 +228,48 @@ const defaultData: LifeData = {
   todayFocus: "",
   energyPlan: "",
 };
+
+function normalizeAttachment(attachment: unknown, index: number): AttachmentLink | null {
+  if (typeof attachment === "string") {
+    const safeUrl = sanitizeAttachmentUrl(attachment);
+    if (!safeUrl) {
+      return null;
+    }
+
+    return {
+      id: `attachment-${index + 1}`,
+      label: `attachment ${index + 1}`,
+      url: safeUrl,
+      source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url",
+    };
+  }
+
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+
+  const value = attachment as {
+    id?: string;
+    label?: string;
+    url?: string;
+    source?: string;
+  };
+
+  const safeUrl = sanitizeAttachmentUrl(value.url ?? "");
+  if (!safeUrl) {
+    return null;
+  }
+
+  const source: AttachmentSource =
+    value.source === "local-file-ref" || safeUrl.startsWith("local-file://") ? "local-file-ref" : "url";
+
+  return {
+    id: typeof value.id === "string" && value.id.length > 0 ? value.id : `attachment-${index + 1}`,
+    label: typeof value.label === "string" && value.label.trim().length > 0 ? value.label.trim() : `attachment ${index + 1}`,
+    url: safeUrl,
+    source,
+  };
+}
 
 function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry {
   const fallbackId = `${kind}-${index + 1}`;
@@ -148,6 +294,7 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
     timeline?: string;
     areaTags?: string[];
     projectIds?: string[];
+    attachments?: unknown[];
   };
 
   const priority = value.priority;
@@ -176,6 +323,11 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
     projectIds: Array.isArray(value.projectIds)
       ? value.projectIds.filter((projectId): projectId is string => typeof projectId === "string")
       : [],
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments
+          .map((attachment, attachmentIndex) => normalizeAttachment(attachment, attachmentIndex))
+          .filter((attachment): attachment is AttachmentLink => attachment !== null)
+      : [],
   };
 }
 
@@ -199,6 +351,7 @@ function normalizeProject(project: unknown, index: number): ProjectEntry | null 
     description?: string;
     dueDate?: string;
     areaTags?: string[];
+    attachments?: unknown[];
   };
 
   if (typeof value.title !== "string" || value.title.trim().length === 0) {
@@ -219,6 +372,11 @@ function normalizeProject(project: unknown, index: number): ProjectEntry | null 
           tag === "learning" ||
           tag === "soul"
         )
+      : [],
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments
+          .map((attachment, attachmentIndex) => normalizeAttachment(attachment, attachmentIndex))
+          .filter((attachment): attachment is AttachmentLink => attachment !== null)
       : [],
   };
 }
@@ -260,41 +418,99 @@ function normalizeData(parsed: unknown): LifeData {
   };
 }
 
+function sanitizeDataForStorage(data: LifeData): LifeData {
+  return {
+    visions: {
+      health: data.visions.health.trim(),
+      work: data.visions.work.trim(),
+      relationships: data.visions.relationships.trim(),
+      financial: data.visions.financial.trim(),
+      learning: data.visions.learning.trim(),
+      soul: data.visions.soul.trim(),
+    },
+    goals: {
+      daily: data.goals.daily.map((goal) => ({
+        ...goal,
+        title: goal.title.trim(),
+        description: goal.description.trim(),
+        dueDate: goal.dueDate.trim(),
+        attachments: sanitizeAttachments(goal.attachments),
+      })),
+      weekly: data.goals.weekly.map((goal) => ({
+        ...goal,
+        title: goal.title.trim(),
+        description: goal.description.trim(),
+        dueDate: goal.dueDate.trim(),
+        attachments: sanitizeAttachments(goal.attachments),
+      })),
+      monthly: data.goals.monthly.map((goal) => ({
+        ...goal,
+        title: goal.title.trim(),
+        description: goal.description.trim(),
+        dueDate: goal.dueDate.trim(),
+        attachments: sanitizeAttachments(goal.attachments),
+      })),
+    },
+    projects: data.projects.map((project) => ({
+      ...project,
+      title: project.title.trim(),
+      description: project.description.trim(),
+      dueDate: project.dueDate.trim(),
+      attachments: sanitizeAttachments(project.attachments),
+    })),
+    todayFocus: data.todayFocus.trim(),
+    energyPlan: data.energyPlan.trim(),
+  };
+}
+
+function attachmentIsLink(attachment: AttachmentLink): boolean {
+  return attachment.url.startsWith("http://") || attachment.url.startsWith("https://") || attachment.url.startsWith("file://");
+}
+
 export default function Home() {
   const [data, setData] = useState<LifeData>(defaultData);
   const [filters, setFilters] = useState<GoalFilters>({ areaTags: [], projectIds: [] });
-  const [projectDraft, setProjectDraft] = useState({
-    title: "",
-    description: "",
-    dueDate: "",
-    areaTags: [] as LifeArea[],
-  });
+  const [projectDraft, setProjectDraft] = useState<ProjectDraft>(createEmptyProjectDraft);
+  const [goalAttachmentDrafts, setGoalAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
+  const [projectAttachmentDrafts, setProjectAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
+  const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>(JSON.stringify(defaultData));
+  const [lastSavedAt, setLastSavedAt] = useState<string>("");
+  const [toastMessage, setToastMessage] = useState<string>("");
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
 
-  const hasLoadedFromStorage = useRef(false);
+  const filePickerRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        hasLoadedFromStorage.current = true;
-        return;
-      }
-
-      setData(normalizeData(JSON.parse(raw) as unknown));
+      const loadedData = raw ? normalizeData(JSON.parse(raw) as unknown) : defaultData;
+      setData(loadedData);
+      setLastSavedSnapshot(JSON.stringify(loadedData));
     } catch {
-      // keep defaults if storage is missing or malformed
+      setData(defaultData);
+      setLastSavedSnapshot(JSON.stringify(defaultData));
     } finally {
-      hasLoadedFromStorage.current = true;
+      setIsLoaded(true);
     }
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedFromStorage.current) {
+    if (!toastMessage) {
       return;
     }
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+    const timer = setTimeout(() => setToastMessage(""), 2200);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!isLoaded) {
+      return false;
+    }
+
+    return JSON.stringify(data) !== lastSavedSnapshot;
+  }, [data, isLoaded, lastSavedSnapshot]);
 
   const filledCount = useMemo(() => {
     const visionCount = Object.values(data.visions).filter((v) => v.trim().length > 0).length;
@@ -332,8 +548,15 @@ export default function Home() {
     }));
   };
 
+  const updateProject = (projectId: string, updater: (project: ProjectEntry) => ProjectEntry) => {
+    setData((prev) => ({
+      ...prev,
+      projects: prev.projects.map((project) => (project.id === projectId ? updater(project) : project)),
+    }));
+  };
+
   const addGoal = (kind: GoalType) => {
-    const id = `goal-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = createId(`goal-${kind}`);
     setData((prev) => ({
       ...prev,
       goals: {
@@ -359,7 +582,7 @@ export default function Home() {
       return;
     }
 
-    const projectId = `project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const projectId = createId("project");
 
     setData((prev) => ({
       ...prev,
@@ -371,16 +594,12 @@ export default function Home() {
           description: projectDraft.description.trim(),
           dueDate: projectDraft.dueDate,
           areaTags: projectDraft.areaTags,
+          attachments: sanitizeAttachments(projectDraft.attachments),
         },
       ],
     }));
 
-    setProjectDraft({
-      title: "",
-      description: "",
-      dueDate: "",
-      areaTags: [],
-    });
+    setProjectDraft(createEmptyProjectDraft());
   };
 
   const removeProject = (projectId: string) => {
@@ -409,8 +628,184 @@ export default function Home() {
     }));
   };
 
+  const saveChanges = () => {
+    const safeData = sanitizeDataForStorage(data);
+    const serialized = JSON.stringify(safeData);
+
+    localStorage.setItem(STORAGE_KEY, serialized);
+    setData(safeData);
+    setLastSavedSnapshot(serialized);
+    setLastSavedAt(
+      new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    );
+    setToastMessage("saved to your browser storage");
+  };
+
+  const goalDraftKey = (kind: GoalType, goalId: string) => `${kind}:${goalId}`;
+
+  const setGoalAttachmentDraft = (kind: GoalType, goalId: string, updater: (draft: AttachmentDraft) => AttachmentDraft) => {
+    const key = goalDraftKey(kind, goalId);
+    setGoalAttachmentDrafts((prev) => ({
+      ...prev,
+      [key]: updater(prev[key] ?? { ...EMPTY_ATTACHMENT_DRAFT }),
+    }));
+  };
+
+  const addGoalAttachmentLink = (kind: GoalType, goalId: string) => {
+    const key = goalDraftKey(kind, goalId);
+    const draft = goalAttachmentDrafts[key] ?? EMPTY_ATTACHMENT_DRAFT;
+    const safeUrl = sanitizeAttachmentUrl(draft.url);
+
+    if (!safeUrl) {
+      setToastMessage("attachment link must start with https://, http://, file://, or local-file://");
+      return;
+    }
+
+    const label = draft.label.trim() || safeUrl.replace(/^https?:\/\//, "").slice(0, 40);
+    updateGoal(kind, goalId, (goal) => ({
+      ...goal,
+      attachments: [...goal.attachments, { id: createId("goal-attachment"), label, url: safeUrl, source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url" }],
+    }));
+
+    setGoalAttachmentDrafts((prev) => ({
+      ...prev,
+      [key]: { ...EMPTY_ATTACHMENT_DRAFT },
+    }));
+  };
+
+  const removeGoalAttachment = (kind: GoalType, goalId: string, attachmentId: string) => {
+    updateGoal(kind, goalId, (goal) => ({
+      ...goal,
+      attachments: goal.attachments.filter((attachment) => attachment.id !== attachmentId),
+    }));
+  };
+
+  const addProjectAttachmentLink = (projectId: string) => {
+    const draft = projectAttachmentDrafts[projectId] ?? EMPTY_ATTACHMENT_DRAFT;
+    const safeUrl = sanitizeAttachmentUrl(draft.url);
+
+    if (!safeUrl) {
+      setToastMessage("attachment link must start with https://, http://, file://, or local-file://");
+      return;
+    }
+
+    const label = draft.label.trim() || safeUrl.replace(/^https?:\/\//, "").slice(0, 40);
+    updateProject(projectId, (project) => ({
+      ...project,
+      attachments: [
+        ...project.attachments,
+        {
+          id: createId("project-attachment"),
+          label,
+          url: safeUrl,
+          source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url",
+        },
+      ],
+    }));
+
+    setProjectAttachmentDrafts((prev) => ({
+      ...prev,
+      [projectId]: { ...EMPTY_ATTACHMENT_DRAFT },
+    }));
+  };
+
+  const removeProjectAttachment = (projectId: string, attachmentId: string) => {
+    updateProject(projectId, (project) => ({
+      ...project,
+      attachments: project.attachments.filter((attachment) => attachment.id !== attachmentId),
+    }));
+  };
+
+  const addProjectDraftAttachmentLink = () => {
+    const safeUrl = sanitizeAttachmentUrl(projectDraft.attachmentDraft.url);
+
+    if (!safeUrl) {
+      setToastMessage("attachment link must start with https://, http://, file://, or local-file://");
+      return;
+    }
+
+    const label = projectDraft.attachmentDraft.label.trim() || safeUrl.replace(/^https?:\/\//, "").slice(0, 40);
+
+    setProjectDraft((prev) => ({
+      ...prev,
+      attachments: [
+        ...prev.attachments,
+        {
+          id: createId("project-draft-attachment"),
+          label,
+          url: safeUrl,
+          source: safeUrl.startsWith("local-file://") ? "local-file-ref" : "url",
+        },
+      ],
+      attachmentDraft: { ...EMPTY_ATTACHMENT_DRAFT },
+    }));
+  };
+
+  const removeProjectDraftAttachment = (attachmentId: string) => {
+    setProjectDraft((prev) => ({
+      ...prev,
+      attachments: prev.attachments.filter((attachment) => attachment.id !== attachmentId),
+    }));
+  };
+
+  const openFileUpload = (target: UploadTarget) => {
+    setUploadTarget(target);
+    filePickerRef.current?.click();
+  };
+
+  const handleAttachmentFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = "";
+
+    if (!uploadTarget || files.length === 0) {
+      return;
+    }
+
+    const attachments = files.map(fileToAttachment);
+
+    if (uploadTarget.entity === "goal") {
+      updateGoal(uploadTarget.kind, uploadTarget.goalId, (goal) => ({
+        ...goal,
+        attachments: [...goal.attachments, ...attachments],
+      }));
+    }
+
+    if (uploadTarget.entity === "project") {
+      updateProject(uploadTarget.projectId, (project) => ({
+        ...project,
+        attachments: [...project.attachments, ...attachments],
+      }));
+    }
+
+    if (uploadTarget.entity === "project-draft") {
+      setProjectDraft((prev) => ({
+        ...prev,
+        attachments: [...prev.attachments, ...attachments],
+      }));
+    }
+
+    setUploadTarget(null);
+    setToastMessage(`${attachments.length} local file reference${attachments.length > 1 ? "s" : ""} added`);
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-[family-name:var(--font-space-grotesk)]">
+      <input ref={filePickerRef} type="file" multiple className="hidden" onChange={handleAttachmentFileUpload} />
+
+      {toastMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 10 }}
+          className="fixed bottom-5 right-5 z-50 rounded-xl border border-teal-500/40 bg-zinc-900 px-4 py-2 text-sm text-teal-200 shadow-lg"
+        >
+          {toastMessage}
+        </motion.div>
+      )}
+
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-10">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -422,18 +817,38 @@ export default function Home() {
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">carbon&apos;s system</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">life operating system</h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Chip variant="flat" className="bg-zinc-800 text-zinc-200">
               {filledCount} entries filled
+            </Chip>
+            <Chip
+              variant="flat"
+              className={
+                hasUnsavedChanges
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                  : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+              }
+            >
+              {hasUnsavedChanges ? "unsaved changes" : "all saved"}
             </Chip>
             <Button
               size="sm"
               variant="flat"
               className="bg-teal-500/20 text-teal-300"
+              isDisabled={!hasUnsavedChanges}
+              onPress={saveChanges}
+            >
+              save changes
+            </Button>
+            <Button
+              size="sm"
+              variant="flat"
+              className="bg-zinc-800 text-zinc-200"
               onPress={() => setData(defaultData)}
             >
               reset
             </Button>
+            {lastSavedAt && <span className="text-xs text-zinc-500">last saved {lastSavedAt}</span>}
           </div>
         </motion.div>
 
@@ -567,46 +982,47 @@ export default function Home() {
                       </div>
 
                       <div className="space-y-3">
-                        {filteredGoals[kind].map((goal, idx) => (
-                          <Card key={goal.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
-                            <CardHeader className="flex items-center justify-between gap-3 pb-2">
-                              <p className="text-sm text-zinc-400">{GOAL_LABELS[kind]} goal #{idx + 1}</p>
-                              <Button
-                                size="sm"
-                                variant="light"
-                                className="text-zinc-500"
-                                isDisabled={data.goals[kind].length === 1}
-                                onPress={() => removeGoal(kind, goal.id)}
-                              >
-                                remove
-                              </Button>
-                            </CardHeader>
-                            <CardBody className="space-y-3">
-                              <Input
-                                variant="bordered"
-                                value={goal.title}
-                                onValueChange={(value) => updateGoal(kind, goal.id, (prev) => ({ ...prev, title: value }))}
-                                placeholder="title"
-                                classNames={{
-                                  inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                  input: "text-zinc-100 placeholder:text-zinc-500",
-                                }}
-                              />
-                              <Textarea
-                                minRows={2}
-                                variant="bordered"
-                                value={goal.description}
-                                onValueChange={(value) =>
-                                  updateGoal(kind, goal.id, (prev) => ({ ...prev, description: value }))
-                                }
-                                placeholder="description"
-                                classNames={{
-                                  inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                  input: "text-zinc-100 placeholder:text-zinc-500",
-                                }}
-                              />
+                        {filteredGoals[kind].map((goal, idx) => {
+                          const draftKey = goalDraftKey(kind, goal.id);
+                          const draft = goalAttachmentDrafts[draftKey] ?? EMPTY_ATTACHMENT_DRAFT;
 
-                              <div className="grid gap-3 sm:grid-cols-2">
+                          return (
+                            <Card key={goal.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
+                              <CardHeader className="flex items-center justify-between gap-3 pb-2">
+                                <p className="text-sm text-zinc-400">{GOAL_LABELS[kind]} goal #{idx + 1}</p>
+                                <Button
+                                  size="sm"
+                                  variant="light"
+                                  className="text-zinc-500"
+                                  isDisabled={data.goals[kind].length === 1}
+                                  onPress={() => removeGoal(kind, goal.id)}
+                                >
+                                  remove
+                                </Button>
+                              </CardHeader>
+                              <CardBody className="space-y-3">
+                                <Input
+                                  variant="bordered"
+                                  value={goal.title}
+                                  onValueChange={(value) => updateGoal(kind, goal.id, (prev) => ({ ...prev, title: value }))}
+                                  placeholder="title"
+                                  classNames={{
+                                    inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                    input: "text-zinc-100 placeholder:text-zinc-500",
+                                  }}
+                                />
+                                <Textarea
+                                  minRows={2}
+                                  variant="bordered"
+                                  value={goal.description}
+                                  onValueChange={(value) => updateGoal(kind, goal.id, (prev) => ({ ...prev, description: value }))}
+                                  placeholder="description"
+                                  classNames={{
+                                    inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                    input: "text-zinc-100 placeholder:text-zinc-500",
+                                  }}
+                                />
+
                                 <Input
                                   type="date"
                                   label="due date"
@@ -620,126 +1036,206 @@ export default function Home() {
                                     label: "text-zinc-400",
                                   }}
                                 />
-                              </div>
 
-                              <div className="space-y-2">
-                                <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
-                                    const selected = goal.priority === priority;
-                                    return (
-                                      <Button
-                                        key={`${goal.id}-priority-${priority}`}
-                                        size="sm"
-                                        variant={selected ? "flat" : "bordered"}
-                                        className={
-                                          selected
-                                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                            : "border-zinc-700 text-zinc-300"
-                                        }
-                                        onPress={() =>
-                                          updateGoal(kind, goal.id, (prev) => ({
-                                            ...prev,
-                                            priority: prev.priority === priority ? "" : priority,
-                                          }))
-                                        }
-                                      >
-                                        {PRIORITY_LABELS[priority]}
-                                      </Button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              <div className="space-y-2">
-                                <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">timeline</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
-                                    const selected = goal.timeline === timeline;
-                                    return (
-                                      <Button
-                                        key={`${goal.id}-timeline-${timeline}`}
-                                        size="sm"
-                                        variant={selected ? "flat" : "bordered"}
-                                        className={
-                                          selected
-                                            ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
-                                            : "border-zinc-700 text-zinc-300"
-                                        }
-                                        onPress={() =>
-                                          updateGoal(kind, goal.id, (prev) => ({
-                                            ...prev,
-                                            timeline: prev.timeline === timeline ? "" : timeline,
-                                          }))
-                                        }
-                                      >
-                                        {TIMELINE_LABELS[timeline]}
-                                      </Button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              <div className="space-y-2">
-                                <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">key areas</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
-                                    const selected = goal.areaTags.includes(area);
-                                    return (
-                                      <Button
-                                        key={`${goal.id}-area-${area}`}
-                                        size="sm"
-                                        variant={selected ? "flat" : "bordered"}
-                                        className={selected ? AREA_TAG_CLASSES[area] : "border-zinc-700 text-zinc-300"}
-                                        onPress={() =>
-                                          updateGoal(kind, goal.id, (prev) => ({
-                                            ...prev,
-                                            areaTags: toggleInArray(prev.areaTags, area),
-                                          }))
-                                        }
-                                      >
-                                        {AREA_LABELS[area]}
-                                      </Button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              <div className="space-y-2">
-                                <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">projects</p>
-                                {data.projects.length > 0 ? (
+                                <div className="space-y-2">
+                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
                                   <div className="flex flex-wrap gap-2">
-                                    {data.projects.map((project) => {
-                                      const selected = goal.projectIds.includes(project.id);
+                                    {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
+                                      const selected = goal.priority === priority;
                                       return (
                                         <Button
-                                          key={`${goal.id}-project-${project.id}`}
+                                          key={`${goal.id}-priority-${priority}`}
                                           size="sm"
                                           variant={selected ? "flat" : "bordered"}
                                           className={
                                             selected
-                                              ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                                              ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
                                               : "border-zinc-700 text-zinc-300"
                                           }
                                           onPress={() =>
                                             updateGoal(kind, goal.id, (prev) => ({
                                               ...prev,
-                                              projectIds: toggleInArray(prev.projectIds, project.id),
+                                              priority: prev.priority === priority ? "" : priority,
                                             }))
                                           }
                                         >
-                                          {project.title}
+                                          {PRIORITY_LABELS[priority]}
                                         </Button>
                                       );
                                     })}
                                   </div>
-                                ) : (
-                                  <p className="text-sm text-zinc-500">add a project first to tag goals here.</p>
-                                )}
-                              </div>
-                            </CardBody>
-                          </Card>
-                        ))}
+                                </div>
+
+                                <div className="space-y-2">
+                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">timeline</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
+                                      const selected = goal.timeline === timeline;
+                                      return (
+                                        <Button
+                                          key={`${goal.id}-timeline-${timeline}`}
+                                          size="sm"
+                                          variant={selected ? "flat" : "bordered"}
+                                          className={
+                                            selected
+                                              ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                              : "border-zinc-700 text-zinc-300"
+                                          }
+                                          onPress={() =>
+                                            updateGoal(kind, goal.id, (prev) => ({
+                                              ...prev,
+                                              timeline: prev.timeline === timeline ? "" : timeline,
+                                            }))
+                                          }
+                                        >
+                                          {TIMELINE_LABELS[timeline]}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">key areas</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
+                                      const selected = goal.areaTags.includes(area);
+                                      return (
+                                        <Button
+                                          key={`${goal.id}-area-${area}`}
+                                          size="sm"
+                                          variant={selected ? "flat" : "bordered"}
+                                          className={selected ? AREA_TAG_CLASSES[area] : "border-zinc-700 text-zinc-300"}
+                                          onPress={() =>
+                                            updateGoal(kind, goal.id, (prev) => ({
+                                              ...prev,
+                                              areaTags: toggleInArray(prev.areaTags, area),
+                                            }))
+                                          }
+                                        >
+                                          {AREA_LABELS[area]}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">projects</p>
+                                  {data.projects.length > 0 ? (
+                                    <div className="flex flex-wrap gap-2">
+                                      {data.projects.map((project) => {
+                                        const selected = goal.projectIds.includes(project.id);
+                                        return (
+                                          <Button
+                                            key={`${goal.id}-project-${project.id}`}
+                                            size="sm"
+                                            variant={selected ? "flat" : "bordered"}
+                                            className={
+                                              selected
+                                                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                                                : "border-zinc-700 text-zinc-300"
+                                            }
+                                            onPress={() =>
+                                              updateGoal(kind, goal.id, (prev) => ({
+                                                ...prev,
+                                                projectIds: toggleInArray(prev.projectIds, project.id),
+                                              }))
+                                            }
+                                          >
+                                            {project.title}
+                                          </Button>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm text-zinc-500">add a project first to tag goals here.</p>
+                                  )}
+                                </div>
+
+                                <div className="space-y-2">
+                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">attachments</p>
+                                  <div className="grid gap-2 sm:grid-cols-2">
+                                    <Input
+                                      variant="bordered"
+                                      value={draft.label}
+                                      onValueChange={(value) =>
+                                        setGoalAttachmentDraft(kind, goal.id, (prev) => ({ ...prev, label: value }))
+                                      }
+                                      placeholder="attachment label"
+                                      classNames={{
+                                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                        input: "text-zinc-100 placeholder:text-zinc-500",
+                                      }}
+                                    />
+                                    <Input
+                                      variant="bordered"
+                                      value={draft.url}
+                                      onValueChange={(value) =>
+                                        setGoalAttachmentDraft(kind, goal.id, (prev) => ({ ...prev, url: value }))
+                                      }
+                                      placeholder="https://... or file://..."
+                                      classNames={{
+                                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                        input: "text-zinc-100 placeholder:text-zinc-500",
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="flat"
+                                      className="bg-zinc-800 text-zinc-200"
+                                      onPress={() => addGoalAttachmentLink(kind, goal.id)}
+                                    >
+                                      add link
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="flat"
+                                      className="bg-zinc-800 text-zinc-200"
+                                      onPress={() => openFileUpload({ entity: "goal", kind, goalId: goal.id })}
+                                    >
+                                      upload file ref
+                                    </Button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {goal.attachments.map((attachment) => (
+                                      <div
+                                        key={attachment.id}
+                                        className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
+                                      >
+                                        {attachmentIsLink(attachment) ? (
+                                          <a
+                                            href={attachment.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-xs text-zinc-200 underline decoration-zinc-600"
+                                          >
+                                            {attachment.label}
+                                          </a>
+                                        ) : (
+                                          <span className="text-xs text-zinc-300">{attachment.label}</span>
+                                        )}
+                                        <Button
+                                          size="sm"
+                                          variant="light"
+                                          className="min-w-0 px-1 text-zinc-500"
+                                          onPress={() => removeGoalAttachment(kind, goal.id, attachment.id)}
+                                        >
+                                          x
+                                        </Button>
+                                      </div>
+                                    ))}
+                                    {goal.attachments.length === 0 && (
+                                      <span className="text-xs text-zinc-500">no attachments yet</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </CardBody>
+                            </Card>
+                          );
+                        })}
 
                         {filteredGoals[kind].length === 0 && (
                           <p className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">
@@ -826,6 +1322,86 @@ export default function Home() {
                     })}
                   </div>
                 </div>
+
+                <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project attachments</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Input
+                      variant="bordered"
+                      value={projectDraft.attachmentDraft.label}
+                      onValueChange={(value) =>
+                        setProjectDraft((prev) => ({
+                          ...prev,
+                          attachmentDraft: { ...prev.attachmentDraft, label: value },
+                        }))
+                      }
+                      placeholder="attachment label"
+                      classNames={{
+                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        input: "text-zinc-100 placeholder:text-zinc-500",
+                      }}
+                    />
+                    <Input
+                      variant="bordered"
+                      value={projectDraft.attachmentDraft.url}
+                      onValueChange={(value) =>
+                        setProjectDraft((prev) => ({
+                          ...prev,
+                          attachmentDraft: { ...prev.attachmentDraft, url: value },
+                        }))
+                      }
+                      placeholder="https://... or file://..."
+                      classNames={{
+                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        input: "text-zinc-100 placeholder:text-zinc-500",
+                      }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="flat" className="bg-zinc-800 text-zinc-200" onPress={addProjectDraftAttachmentLink}>
+                      add link
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className="bg-zinc-800 text-zinc-200"
+                      onPress={() => openFileUpload({ entity: "project-draft" })}
+                    >
+                      upload file ref
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {projectDraft.attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
+                      >
+                        {attachmentIsLink(attachment) ? (
+                          <a
+                            href={attachment.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-zinc-200 underline decoration-zinc-600"
+                          >
+                            {attachment.label}
+                          </a>
+                        ) : (
+                          <span className="text-xs text-zinc-300">{attachment.label}</span>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="min-w-0 px-1 text-zinc-500"
+                          onPress={() => removeProjectDraftAttachment(attachment.id)}
+                        >
+                          x
+                        </Button>
+                      </div>
+                    ))}
+                    {projectDraft.attachments.length === 0 && <span className="text-xs text-zinc-500">no attachments yet</span>}
+                  </div>
+                </div>
+
                 <Button
                   variant="flat"
                   className="bg-cyan-500/20 text-cyan-300"
@@ -837,40 +1413,125 @@ export default function Home() {
 
                 <div className="space-y-3 border-t border-zinc-800 pt-4">
                   {data.projects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
-                  {data.projects.map((project) => (
-                    <Card key={project.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
-                      <CardHeader className="flex items-start justify-between gap-3 pb-2">
-                        <div>
-                          <h3 className="text-sm font-medium text-zinc-100">{project.title}</h3>
-                          {project.description.length > 0 && (
-                            <p className="mt-1 text-xs leading-relaxed text-zinc-400">{project.description}</p>
-                          )}
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="light"
-                          className="text-zinc-500"
-                          onPress={() => removeProject(project.id)}
-                        >
-                          remove
-                        </Button>
-                      </CardHeader>
-                      <CardBody className="pt-0">
-                        <div className="flex flex-wrap gap-2">
-                          {project.dueDate.length > 0 && (
-                            <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
-                              due {project.dueDate}
-                            </Chip>
-                          )}
-                          {project.areaTags.map((area) => (
-                            <Chip key={`${project.id}-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
-                              {AREA_LABELS[area]}
-                            </Chip>
-                          ))}
-                        </div>
-                      </CardBody>
-                    </Card>
-                  ))}
+                  {data.projects.map((project) => {
+                    const draft = projectAttachmentDrafts[project.id] ?? EMPTY_ATTACHMENT_DRAFT;
+
+                    return (
+                      <Card key={project.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
+                        <CardHeader className="flex items-start justify-between gap-3 pb-2">
+                          <div>
+                            <h3 className="text-sm font-medium text-zinc-100">{project.title}</h3>
+                            {project.description.length > 0 && (
+                              <p className="mt-1 text-xs leading-relaxed text-zinc-400">{project.description}</p>
+                            )}
+                          </div>
+                          <Button size="sm" variant="light" className="text-zinc-500" onPress={() => removeProject(project.id)}>
+                            remove
+                          </Button>
+                        </CardHeader>
+                        <CardBody className="space-y-3 pt-0">
+                          <div className="flex flex-wrap gap-2">
+                            {project.dueDate.length > 0 && (
+                              <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
+                                due {project.dueDate}
+                              </Chip>
+                            )}
+                            {project.areaTags.map((area) => (
+                              <Chip key={`${project.id}-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
+                                {AREA_LABELS[area]}
+                              </Chip>
+                            ))}
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">attachments</p>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <Input
+                                variant="bordered"
+                                value={draft.label}
+                                onValueChange={(value) =>
+                                  setProjectAttachmentDrafts((prev) => ({
+                                    ...prev,
+                                    [project.id]: { ...draft, label: value },
+                                  }))
+                                }
+                                placeholder="attachment label"
+                                classNames={{
+                                  inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                  input: "text-zinc-100 placeholder:text-zinc-500",
+                                }}
+                              />
+                              <Input
+                                variant="bordered"
+                                value={draft.url}
+                                onValueChange={(value) =>
+                                  setProjectAttachmentDrafts((prev) => ({
+                                    ...prev,
+                                    [project.id]: { ...draft, url: value },
+                                  }))
+                                }
+                                placeholder="https://... or file://..."
+                                classNames={{
+                                  inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                  input: "text-zinc-100 placeholder:text-zinc-500",
+                                }}
+                              />
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                className="bg-zinc-800 text-zinc-200"
+                                onPress={() => addProjectAttachmentLink(project.id)}
+                              >
+                                add link
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                className="bg-zinc-800 text-zinc-200"
+                                onPress={() => openFileUpload({ entity: "project", projectId: project.id })}
+                              >
+                                upload file ref
+                              </Button>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {project.attachments.map((attachment) => (
+                                <div
+                                  key={attachment.id}
+                                  className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
+                                >
+                                  {attachmentIsLink(attachment) ? (
+                                    <a
+                                      href={attachment.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-xs text-zinc-200 underline decoration-zinc-600"
+                                    >
+                                      {attachment.label}
+                                    </a>
+                                  ) : (
+                                    <span className="text-xs text-zinc-300">{attachment.label}</span>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="light"
+                                    className="min-w-0 px-1 text-zinc-500"
+                                    onPress={() => removeProjectAttachment(project.id, attachment.id)}
+                                  >
+                                    x
+                                  </Button>
+                                </div>
+                              ))}
+                              {project.attachments.length === 0 && (
+                                <span className="text-xs text-zinc-500">no attachments yet</span>
+                              )}
+                            </div>
+                          </div>
+                        </CardBody>
+                      </Card>
+                    );
+                  })}
                 </div>
               </CardBody>
             </Card>
