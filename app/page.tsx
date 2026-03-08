@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Card, CardBody, CardHeader, Chip, Input, Tab, Tabs, Textarea } from "@heroui/react";
+import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Tab, Tabs, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
@@ -67,6 +67,8 @@ type LifeData = {
   visions: Record<LifeArea, string>;
   goals: Record<GoalType, GoalEntry[]>;
   projects: ProjectEntry[];
+  todayGoalRef: string;
+  todayProjectId: string;
   todayFocus: string;
   energyPlan: string;
 };
@@ -225,6 +227,8 @@ const defaultData: LifeData = {
     monthly: createDefaultGoals("monthly"),
   },
   projects: [],
+  todayGoalRef: "",
+  todayProjectId: "",
   todayFocus: "",
   energyPlan: "",
 };
@@ -390,6 +394,8 @@ function normalizeData(parsed: unknown): LifeData {
     visions?: Record<string, string>;
     goals?: Record<string, unknown>;
     projects?: unknown[];
+    todayGoalRef?: string;
+    todayProjectId?: string;
     todayFocus?: string;
     energyPlan?: string;
   };
@@ -413,6 +419,8 @@ function normalizeData(parsed: unknown): LifeData {
           .map((project, index) => normalizeProject(project, index))
           .filter((project): project is ProjectEntry => project !== null)
       : [],
+    todayGoalRef: value.todayGoalRef ?? "",
+    todayProjectId: value.todayProjectId ?? "",
     todayFocus: value.todayFocus ?? "",
     energyPlan: value.energyPlan ?? "",
   };
@@ -458,6 +466,8 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
       dueDate: project.dueDate.trim(),
       attachments: sanitizeAttachments(project.attachments),
     })),
+    todayGoalRef: data.todayGoalRef.trim(),
+    todayProjectId: data.todayProjectId.trim(),
     todayFocus: data.todayFocus.trim(),
     energyPlan: data.energyPlan.trim(),
   };
@@ -478,6 +488,7 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string>("");
   const [isLoaded, setIsLoaded] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
+  const [showProjectForm, setShowProjectForm] = useState(false);
 
   const filePickerRef = useRef<HTMLInputElement | null>(null);
 
@@ -538,6 +549,17 @@ export default function Home() {
     } satisfies Record<GoalType, GoalEntry[]>;
   }, [data.goals, filters]);
 
+  const goalReferenceOptions = useMemo(
+    () =>
+      (Object.keys(GOAL_LABELS) as GoalType[]).flatMap((kind) =>
+        data.goals[kind].map((goal) => ({
+          ref: `${kind}:${goal.id}`,
+          label: `${GOAL_LABELS[kind]} - ${goal.title.trim() || "untitled goal"}`,
+        }))
+      ),
+    [data.goals]
+  );
+
   const updateGoal = (kind: GoalType, goalId: string, updater: (goal: GoalEntry) => GoalEntry) => {
     setData((prev) => ({
       ...prev,
@@ -567,6 +589,7 @@ export default function Home() {
   };
 
   const removeGoal = (kind: GoalType, goalId: string) => {
+    const refToRemove = `${kind}:${goalId}`;
     setData((prev) => ({
       ...prev,
       goals: {
@@ -574,6 +597,7 @@ export default function Home() {
         [kind]:
           prev.goals[kind].length === 1 ? prev.goals[kind] : prev.goals[kind].filter((goal) => goal.id !== goalId),
       },
+      todayGoalRef: prev.todayGoalRef === refToRemove ? "" : prev.todayGoalRef,
     }));
   };
 
@@ -600,6 +624,7 @@ export default function Home() {
     }));
 
     setProjectDraft(createEmptyProjectDraft());
+    setShowProjectForm(false);
   };
 
   const removeProject = (projectId: string) => {
@@ -620,6 +645,7 @@ export default function Home() {
           projectIds: goal.projectIds.filter((id) => id !== projectId),
         })),
       },
+      todayProjectId: prev.todayProjectId === projectId ? "" : prev.todayProjectId,
     }));
 
     setFilters((prev) => ({
@@ -1254,9 +1280,9 @@ export default function Home() {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, delay: 0.15, ease: "easeOut" }}
-            className="space-y-6"
+            className="flex flex-col gap-6"
           >
-            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="order-2 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
               <CardHeader className="pb-0">
                 <div>
                   <h2 className="text-xl font-medium">projects</h2>
@@ -1264,152 +1290,174 @@ export default function Home() {
                 </div>
               </CardHeader>
               <CardBody className="space-y-4 pt-4">
-                <Input
-                  variant="bordered"
-                  value={projectDraft.title}
-                  onValueChange={(value) => setProjectDraft((prev) => ({ ...prev, title: value }))}
-                  placeholder="project title"
-                  classNames={{
-                    inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                    input: "text-zinc-100 placeholder:text-zinc-500",
-                  }}
-                />
-                <Textarea
-                  minRows={2}
-                  variant="bordered"
-                  value={projectDraft.description}
-                  onValueChange={(value) => setProjectDraft((prev) => ({ ...prev, description: value }))}
-                  placeholder="project description"
-                  classNames={{
-                    inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                    input: "text-zinc-100 placeholder:text-zinc-500",
-                  }}
-                />
-                <Input
-                  type="date"
-                  label="project due date"
-                  labelPlacement="outside"
-                  variant="bordered"
-                  value={projectDraft.dueDate}
-                  onValueChange={(value) => setProjectDraft((prev) => ({ ...prev, dueDate: value }))}
-                  classNames={{
-                    inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                    input: "text-zinc-100",
-                    label: "text-zinc-400",
-                  }}
-                />
-                <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project key areas</p>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
-                      const selected = projectDraft.areaTags.includes(area);
-                      return (
-                        <Button
-                          key={`draft-area-${area}`}
-                          size="sm"
-                          variant={selected ? "flat" : "bordered"}
-                          className={selected ? AREA_TAG_CLASSES[area] : "border-zinc-700 text-zinc-300"}
-                          onPress={() =>
+                <div className="flex items-center justify-between gap-3">
+                  <Button
+                    variant="flat"
+                    className="bg-cyan-500/20 text-cyan-300"
+                    onPress={() => setShowProjectForm((prev) => !prev)}
+                  >
+                    {showProjectForm ? "close new project" : "new project"}
+                  </Button>
+                  {showProjectForm && <span className="text-xs text-zinc-500">fill details and click add project</span>}
+                </div>
+
+                {showProjectForm && (
+                  <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+                    <Input
+                      variant="bordered"
+                      value={projectDraft.title}
+                      onValueChange={(value) => setProjectDraft((prev) => ({ ...prev, title: value }))}
+                      placeholder="project title"
+                      classNames={{
+                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        input: "text-zinc-100 placeholder:text-zinc-500",
+                      }}
+                    />
+                    <Textarea
+                      minRows={2}
+                      variant="bordered"
+                      value={projectDraft.description}
+                      onValueChange={(value) => setProjectDraft((prev) => ({ ...prev, description: value }))}
+                      placeholder="project description"
+                      classNames={{
+                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        input: "text-zinc-100 placeholder:text-zinc-500",
+                      }}
+                    />
+                    <Input
+                      type="date"
+                      label="project due date"
+                      labelPlacement="outside"
+                      variant="bordered"
+                      value={projectDraft.dueDate}
+                      onValueChange={(value) => setProjectDraft((prev) => ({ ...prev, dueDate: value }))}
+                      classNames={{
+                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        input: "text-zinc-100",
+                        label: "text-zinc-400",
+                      }}
+                    />
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project key areas</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
+                          const selected = projectDraft.areaTags.includes(area);
+                          return (
+                            <Button
+                              key={`draft-area-${area}`}
+                              size="sm"
+                              variant={selected ? "flat" : "bordered"}
+                              className={selected ? AREA_TAG_CLASSES[area] : "border-zinc-700 text-zinc-300"}
+                              onPress={() =>
+                                setProjectDraft((prev) => ({
+                                  ...prev,
+                                  areaTags: toggleInArray(prev.areaTags, area),
+                                }))
+                              }
+                            >
+                              {AREA_LABELS[area]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project attachments</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Input
+                          variant="bordered"
+                          value={projectDraft.attachmentDraft.label}
+                          onValueChange={(value) =>
                             setProjectDraft((prev) => ({
                               ...prev,
-                              areaTags: toggleInArray(prev.areaTags, area),
+                              attachmentDraft: { ...prev.attachmentDraft, label: value },
                             }))
                           }
-                        >
-                          {AREA_LABELS[area]}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
-                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">project attachments</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input
-                      variant="bordered"
-                      value={projectDraft.attachmentDraft.label}
-                      onValueChange={(value) =>
-                        setProjectDraft((prev) => ({
-                          ...prev,
-                          attachmentDraft: { ...prev.attachmentDraft, label: value },
-                        }))
-                      }
-                      placeholder="attachment label"
-                      classNames={{
-                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                        input: "text-zinc-100 placeholder:text-zinc-500",
-                      }}
-                    />
-                    <Input
-                      variant="bordered"
-                      value={projectDraft.attachmentDraft.url}
-                      onValueChange={(value) =>
-                        setProjectDraft((prev) => ({
-                          ...prev,
-                          attachmentDraft: { ...prev.attachmentDraft, url: value },
-                        }))
-                      }
-                      placeholder="https://... or file://..."
-                      classNames={{
-                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                        input: "text-zinc-100 placeholder:text-zinc-500",
-                      }}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="flat" className="bg-zinc-800 text-zinc-200" onPress={addProjectDraftAttachmentLink}>
-                      add link
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      className="bg-zinc-800 text-zinc-200"
-                      onPress={() => openFileUpload({ entity: "project-draft" })}
-                    >
-                      upload file ref
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {projectDraft.attachments.map((attachment) => (
-                      <div
-                        key={attachment.id}
-                        className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
-                      >
-                        {attachmentIsLink(attachment) ? (
-                          <a
-                            href={attachment.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs text-zinc-200 underline decoration-zinc-600"
-                          >
-                            {attachment.label}
-                          </a>
-                        ) : (
-                          <span className="text-xs text-zinc-300">{attachment.label}</span>
-                        )}
+                          placeholder="attachment label"
+                          classNames={{
+                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                            input: "text-zinc-100 placeholder:text-zinc-500",
+                          }}
+                        />
+                        <Input
+                          variant="bordered"
+                          value={projectDraft.attachmentDraft.url}
+                          onValueChange={(value) =>
+                            setProjectDraft((prev) => ({
+                              ...prev,
+                              attachmentDraft: { ...prev.attachmentDraft, url: value },
+                            }))
+                          }
+                          placeholder="https://... or file://..."
+                          classNames={{
+                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                            input: "text-zinc-100 placeholder:text-zinc-500",
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
-                          variant="light"
-                          className="min-w-0 px-1 text-zinc-500"
-                          onPress={() => removeProjectDraftAttachment(attachment.id)}
+                          variant="flat"
+                          className="bg-zinc-800 text-zinc-200"
+                          onPress={addProjectDraftAttachmentLink}
                         >
-                          x
+                          add link
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          className="bg-zinc-800 text-zinc-200"
+                          onPress={() => openFileUpload({ entity: "project-draft" })}
+                        >
+                          upload file ref
                         </Button>
                       </div>
-                    ))}
-                    {projectDraft.attachments.length === 0 && <span className="text-xs text-zinc-500">no attachments yet</span>}
-                  </div>
-                </div>
+                      <div className="flex flex-wrap gap-2">
+                        {projectDraft.attachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
+                          >
+                            {attachmentIsLink(attachment) ? (
+                              <a
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-zinc-200 underline decoration-zinc-600"
+                              >
+                                {attachment.label}
+                              </a>
+                            ) : (
+                              <span className="text-xs text-zinc-300">{attachment.label}</span>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="light"
+                              className="min-w-0 px-1 text-zinc-500"
+                              onPress={() => removeProjectDraftAttachment(attachment.id)}
+                            >
+                              x
+                            </Button>
+                          </div>
+                        ))}
+                        {projectDraft.attachments.length === 0 && (
+                          <span className="text-xs text-zinc-500">no attachments yet</span>
+                        )}
+                      </div>
+                    </div>
 
-                <Button
-                  variant="flat"
-                  className="bg-cyan-500/20 text-cyan-300"
-                  isDisabled={projectDraft.title.trim().length === 0}
-                  onPress={addProject}
-                >
-                  add project
-                </Button>
+                    <Button
+                      variant="flat"
+                      className="bg-cyan-500/20 text-cyan-300"
+                      isDisabled={projectDraft.title.trim().length === 0}
+                      onPress={addProject}
+                    >
+                      add project
+                    </Button>
+                  </div>
+                )}
 
                 <div className="space-y-3 border-t border-zinc-800 pt-4">
                   {data.projects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
@@ -1536,7 +1584,7 @@ export default function Home() {
               </CardBody>
             </Card>
 
-            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="order-1 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
               <CardHeader className="pb-0">
                 <div>
                   <h2 className="text-xl font-medium">today alignment</h2>
@@ -1544,6 +1592,62 @@ export default function Home() {
                 </div>
               </CardHeader>
               <CardBody className="pt-4 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Select
+                    label="linked goal"
+                    labelPlacement="outside"
+                    placeholder="select a goal"
+                    variant="bordered"
+                    selectedKeys={data.todayGoalRef ? [data.todayGoalRef] : []}
+                    renderValue={(items) => (
+                      <span className="text-zinc-100">{items.map((item) => item.textValue).join(", ")}</span>
+                    )}
+                    onSelectionChange={(keys) => {
+                      const selected = Array.from(keys as Set<string>)[0]?.toString() ?? "";
+                      setData((prev) => ({ ...prev, todayGoalRef: selected }));
+                    }}
+                    classNames={{
+                      trigger: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "text-zinc-100",
+                      label: "text-zinc-400",
+                      selectorIcon: "text-zinc-400",
+                      listboxWrapper: "bg-zinc-900 text-zinc-100",
+                      popoverContent: "bg-zinc-900 border border-zinc-700",
+                    }}
+                  >
+                    {goalReferenceOptions.map((goalOption) => (
+                      <SelectItem key={goalOption.ref}>{goalOption.label}</SelectItem>
+                    ))}
+                  </Select>
+
+                  <Select
+                    label="linked project"
+                    labelPlacement="outside"
+                    placeholder="select a project"
+                    variant="bordered"
+                    selectedKeys={data.todayProjectId ? [data.todayProjectId] : []}
+                    renderValue={(items) => (
+                      <span className="text-zinc-100">{items.map((item) => item.textValue).join(", ")}</span>
+                    )}
+                    onSelectionChange={(keys) => {
+                      const selected = Array.from(keys as Set<string>)[0]?.toString() ?? "";
+                      setData((prev) => ({ ...prev, todayProjectId: selected }));
+                    }}
+                    classNames={{
+                      trigger: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "text-zinc-100",
+                      label: "text-zinc-400",
+                      selectorIcon: "text-zinc-400",
+                      listboxWrapper: "bg-zinc-900 text-zinc-100",
+                      popoverContent: "bg-zinc-900 border border-zinc-700",
+                    }}
+                  >
+                    {data.projects.map((project) => (
+                      <SelectItem key={project.id}>{project.title}</SelectItem>
+                    ))}
+                  </Select>
+                </div>
+
                 <Textarea
                   minRows={4}
                   variant="bordered"
@@ -1569,7 +1673,7 @@ export default function Home() {
               </CardBody>
             </Card>
 
-            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="order-3 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
               <CardBody>
                 <p className="text-sm leading-relaxed text-zinc-300">
                   loop: review vision, tag the next action, then schedule it where your energy is strongest.
