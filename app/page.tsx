@@ -2,7 +2,7 @@
 
 import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Tab, Tabs, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent, type MouseEvent } from "react";
 
 type SafeButtonProps = ComponentProps<typeof HeroButton> & {
   type?: "button" | "submit" | "reset";
@@ -610,6 +610,10 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string>("");
   const [isLoaded, setIsLoaded] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
+  const [goalsEditMode, setGoalsEditMode] = useState(false);
+  const [activeGoalEditorRef, setActiveGoalEditorRef] = useState<string | null>(null);
+  const [projectsEditMode, setProjectsEditMode] = useState(false);
+  const [activeProjectEditorId, setActiveProjectEditorId] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Record<SectionKey, boolean>>({
@@ -1308,14 +1312,24 @@ export default function Home() {
                     <h2 className="text-xl font-medium">goals knowledge base</h2>
                     <p className="mt-1 text-sm text-zinc-400">tag by key area + project, then filter your view</p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    className="text-zinc-400"
-                    onPress={() => toggleSection("goals")}
-                  >
-                    {collapsedSections.goals ? "expand" : "collapse"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className={goalsEditMode ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" : "bg-zinc-800 text-zinc-300"}
+                      onPress={() => setGoalsEditMode((prev) => !prev)}
+                    >
+                      {goalsEditMode ? "edit mode" : "view mode"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      className="text-zinc-400"
+                      onPress={() => toggleSection("goals")}
+                    >
+                      {collapsedSections.goals ? "expand" : "collapse"}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               {!collapsedSections.goals && (
@@ -1398,10 +1412,22 @@ export default function Home() {
                         {filteredGoals[kind].map((goal, idx) => {
                           const draftKey = goalDraftKey(kind, goal.id);
                           const draft = goalAttachmentDrafts[draftKey] ?? EMPTY_ATTACHMENT_DRAFT;
+                          const goalRef = `${kind}:${goal.id}`;
+                          const isGoalEditing = goalsEditMode || activeGoalEditorRef === goalRef;
+                          const handleGoalCardClick = (event: MouseEvent<HTMLElement>) => {
+                            if (goalsEditMode || isGoalEditing) {
+                              return;
+                            }
+                            const target = event.target as HTMLElement;
+                            if (target.closest("button, input, textarea")) {
+                              return;
+                            }
+                            setActiveGoalEditorRef(goalRef);
+                          };
 
                           return (
-                            <Card key={goal.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
-                              <CardHeader className="flex items-center justify-between gap-3 pb-2">
+                            <Card key={goal.id} className={`border border-zinc-800 bg-zinc-950/70 shadow-none ${!isGoalEditing ? "cursor-pointer" : ""}`}>
+                              <CardHeader className="flex items-center justify-between gap-3 pb-2" onClick={handleGoalCardClick}>
                                 <div className="flex min-w-0 items-center gap-3">
                                   <Button
                                     isIconOnly
@@ -1412,12 +1438,14 @@ export default function Home() {
                                         ? "h-9 w-9 min-w-9 rounded-full border-0 bg-transparent p-0 text-2xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
                                         : "h-9 w-9 min-w-9 rounded-full border-0 bg-transparent p-0 text-2xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
                                     }
-                                    onPress={() =>
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
                                       updateGoal(kind, goal.id, (prev) => ({
                                         ...prev,
                                         completed: !prev.completed,
-                                      }))
-                                    }
+                                      }));
+                                    }}
                                   >
                                     {goal.completed ? "✓" : "◯"}
                                   </Button>
@@ -1429,18 +1457,100 @@ export default function Home() {
                                   </p>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="light"
-                                    className="text-zinc-500"
-                                    isDisabled={data.goals[kind].length === 1}
-                                    onPress={() => removeGoal(kind, goal.id)}
-                                  >
-                                    remove
-                                  </Button>
+                                  {!goalsEditMode && isGoalEditing && (
+                                    <Button
+                                      size="sm"
+                                      variant="light"
+                                      className="text-zinc-500"
+                                      onPress={() => setActiveGoalEditorRef(null)}
+                                    >
+                                      done
+                                    </Button>
+                                  )}
+                                  {isGoalEditing && (
+                                    <Button
+                                      size="sm"
+                                      variant="light"
+                                      className="text-zinc-500"
+                                      isDisabled={data.goals[kind].length === 1}
+                                      onPress={() => removeGoal(kind, goal.id)}
+                                    >
+                                      remove
+                                    </Button>
+                                  )}
                                 </div>
                               </CardHeader>
-                              <CardBody className="space-y-3">
+                              <CardBody className="space-y-3" onClick={handleGoalCardClick}>
+                                {!isGoalEditing && (
+                                  <>
+                                    {goal.description.trim().length > 0 && (
+                                      <p className="text-sm leading-relaxed text-zinc-300">{goal.description}</p>
+                                    )}
+                                    <div className="flex flex-wrap gap-2">
+                                      {goal.dueDate.length > 0 && (
+                                        <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
+                                          due {goal.dueDate}
+                                        </Chip>
+                                      )}
+                                      {goal.priority && (
+                                        <Chip
+                                          variant="flat"
+                                          className="bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                        >
+                                          {PRIORITY_LABELS[goal.priority]}
+                                        </Chip>
+                                      )}
+                                      {goal.timeline && (
+                                        <Chip
+                                          variant="flat"
+                                          className="bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                        >
+                                          {TIMELINE_LABELS[goal.timeline]}
+                                        </Chip>
+                                      )}
+                                      {goal.areaTags.map((area) => (
+                                        <Chip key={`${goal.id}-view-area-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
+                                          {AREA_LABELS[area]}
+                                        </Chip>
+                                      ))}
+                                      {goal.projectIds.map((projectId) => {
+                                        const project = data.projects.find((item) => item.id === projectId);
+                                        if (!project) {
+                                          return null;
+                                        }
+                                        return (
+                                          <Chip
+                                            key={`${goal.id}-view-project-${project.id}`}
+                                            variant="flat"
+                                            className="bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                                          >
+                                            {project.title}
+                                          </Chip>
+                                        );
+                                      })}
+                                    </div>
+                                    {goal.attachments.length > 0 && (
+                                      <div className="flex flex-wrap gap-2">
+                                        {goal.attachments.map((attachment) => (
+                                          <button
+                                            key={attachment.id}
+                                            type="button"
+                                            className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 underline decoration-zinc-600"
+                                            onClick={(event) => {
+                                              event.preventDefault();
+                                              event.stopPropagation();
+                                              openAttachment(attachment);
+                                            }}
+                                          >
+                                            {attachment.label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                {isGoalEditing && (
+                                  <>
                                 <Input
                                   variant="bordered"
                                   value={goal.title}
@@ -1679,6 +1789,8 @@ export default function Home() {
                                     )}
                                   </div>
                                 </div>
+                                  </>
+                                )}
                               </CardBody>
                             </Card>
                           );
@@ -1711,30 +1823,42 @@ export default function Home() {
                     <h2 className="text-xl font-medium">projects</h2>
                     <p className="mt-1 text-sm text-zinc-400">group related goals under projects</p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    className="text-zinc-400"
-                    onPress={() => toggleSection("projects")}
-                  >
-                    {collapsedSections.projects ? "expand" : "collapse"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className={projectsEditMode ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" : "bg-zinc-800 text-zinc-300"}
+                      onPress={() => setProjectsEditMode((prev) => !prev)}
+                    >
+                      {projectsEditMode ? "edit mode" : "view mode"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      className="text-zinc-400"
+                      onPress={() => toggleSection("projects")}
+                    >
+                      {collapsedSections.projects ? "expand" : "collapse"}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               {!collapsedSections.projects && (
                 <CardBody className="space-y-4 pt-4">
-                <div className="flex items-center justify-between gap-3">
-                  <Button
-                    variant="flat"
-                    className="bg-cyan-500/20 text-cyan-300"
-                    onPress={() => setShowProjectForm((prev) => !prev)}
-                  >
-                    {showProjectForm ? "close new project" : "new project"}
-                  </Button>
-                  {showProjectForm && <span className="text-xs text-zinc-500">fill details and click add project</span>}
-                </div>
+                {projectsEditMode && (
+                  <div className="flex items-center justify-between gap-3">
+                    <Button
+                      variant="flat"
+                      className="bg-cyan-500/20 text-cyan-300"
+                      onPress={() => setShowProjectForm((prev) => !prev)}
+                    >
+                      {showProjectForm ? "close new project" : "new project"}
+                    </Button>
+                    {showProjectForm && <span className="text-xs text-zinc-500">fill details and click add project</span>}
+                  </div>
+                )}
 
-                {showProjectForm && (
+                {projectsEditMode && showProjectForm && (
                   <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
                     <Input
                       variant="bordered"
@@ -1903,21 +2027,81 @@ export default function Home() {
                   {data.projects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
                   {data.projects.map((project) => {
                     const draft = projectAttachmentDrafts[project.id] ?? EMPTY_ATTACHMENT_DRAFT;
+                    const isProjectEditing = projectsEditMode || activeProjectEditorId === project.id;
+                    const handleProjectCardClick = (event: MouseEvent<HTMLElement>) => {
+                      if (projectsEditMode || isProjectEditing) {
+                        return;
+                      }
+                      const target = event.target as HTMLElement;
+                      if (target.closest("button, input, textarea")) {
+                        return;
+                      }
+                      setActiveProjectEditorId(project.id);
+                    };
 
                     return (
-                      <Card key={project.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
-                        <CardHeader className="flex items-start justify-between gap-3 pb-2">
+                      <Card
+                        key={project.id}
+                        className={`border border-zinc-800 bg-zinc-950/70 shadow-none ${!isProjectEditing ? "cursor-pointer" : ""}`}
+                      >
+                        <CardHeader className="flex items-start justify-between gap-3 pb-2" onClick={handleProjectCardClick}>
                           <div>
                             <h3 className="text-sm font-medium text-zinc-100">{project.title}</h3>
                             {project.description.length > 0 && (
                               <p className="mt-1 text-xs leading-relaxed text-zinc-400">{project.description}</p>
                             )}
                           </div>
-                          <Button size="sm" variant="light" className="text-zinc-500" onPress={() => removeProject(project.id)}>
-                            remove
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            {!projectsEditMode && isProjectEditing && (
+                              <Button
+                                size="sm"
+                                variant="light"
+                                className="text-zinc-500"
+                                onPress={() => setActiveProjectEditorId(null)}
+                              >
+                                done
+                              </Button>
+                            )}
+                            {isProjectEditing && (
+                              <Button size="sm" variant="light" className="text-zinc-500" onPress={() => removeProject(project.id)}>
+                                remove
+                              </Button>
+                            )}
+                          </div>
                         </CardHeader>
-                        <CardBody className="space-y-3 pt-0">
+                        <CardBody className="space-y-3 pt-0" onClick={handleProjectCardClick}>
+                          {!isProjectEditing && (
+                            <>
+                              <div className="flex flex-wrap gap-2">
+                                {project.dueDate.length > 0 && (
+                                  <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
+                                    due {project.dueDate}
+                                  </Chip>
+                                )}
+                                {project.areaTags.map((area) => (
+                                  <Chip key={`${project.id}-view-area-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
+                                    {AREA_LABELS[area]}
+                                  </Chip>
+                                ))}
+                              </div>
+                              {project.attachments.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                  {project.attachments.map((attachment) => (
+                                    <button
+                                      key={attachment.id}
+                                      type="button"
+                                      className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 underline decoration-zinc-600"
+                                      onClick={() => openAttachment(attachment)}
+                                    >
+                                      {attachment.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {isProjectEditing && (
+                            <>
                           <div className="flex flex-wrap gap-2">
                             {project.dueDate.length > 0 && (
                               <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
@@ -2023,6 +2207,8 @@ export default function Home() {
                               )}
                             </div>
                           </div>
+                            </>
+                          )}
                         </CardBody>
                       </Card>
                     );
