@@ -28,6 +28,7 @@ type AttachmentLink = {
 type GoalEntry = {
   id: string;
   title: string;
+  completed: boolean;
   description: string;
   dueDate: string;
   priority: PriorityTag | "";
@@ -267,6 +268,7 @@ function createEmptyGoal(id: string): GoalEntry {
   return {
     id,
     title: "",
+    completed: false,
     description: "",
     dueDate: "",
     priority: "",
@@ -413,6 +415,7 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
   const value = goal as {
     id?: string;
     title?: string;
+    completed?: unknown;
     description?: string;
     dueDate?: string;
     priority?: string;
@@ -428,6 +431,7 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
   return {
     id: typeof value.id === "string" && value.id.length > 0 ? value.id : fallbackId,
     title: typeof value.title === "string" ? value.title : "",
+    completed: typeof value.completed === "boolean" ? value.completed : false,
     description: typeof value.description === "string" ? value.description : "",
     dueDate: typeof value.dueDate === "string" ? value.dueDate : "",
     priority: priority === "low" || priority === "medium" || priority === "high" ? priority : "",
@@ -1398,16 +1402,43 @@ export default function Home() {
                           return (
                             <Card key={goal.id} className="border border-zinc-800 bg-zinc-950/70 shadow-none">
                               <CardHeader className="flex items-center justify-between gap-3 pb-2">
-                                <p className="text-sm text-zinc-400">{GOAL_LABELS[kind]} goal #{idx + 1}</p>
-                                <Button
-                                  size="sm"
-                                  variant="light"
-                                  className="text-zinc-500"
-                                  isDisabled={data.goals[kind].length === 1}
-                                  onPress={() => removeGoal(kind, goal.id)}
-                                >
-                                  remove
-                                </Button>
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <Button
+                                    isIconOnly
+                                    size="sm"
+                                    variant="light"
+                                    className={
+                                      goal.completed
+                                        ? "h-9 w-9 min-w-9 rounded-full border-0 bg-transparent p-0 text-2xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
+                                        : "h-9 w-9 min-w-9 rounded-full border-0 bg-transparent p-0 text-2xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
+                                    }
+                                    onPress={() =>
+                                      updateGoal(kind, goal.id, (prev) => ({
+                                        ...prev,
+                                        completed: !prev.completed,
+                                      }))
+                                    }
+                                  >
+                                    {goal.completed ? "✓" : "◯"}
+                                  </Button>
+                                  <p
+                                    className={`truncate text-sm ${goal.completed ? "text-zinc-500 line-through" : "text-zinc-300"}`}
+                                    title={goal.title.trim() || `${GOAL_LABELS[kind]} goal #${idx + 1}`}
+                                  >
+                                    {goal.title.trim() || `${GOAL_LABELS[kind]} goal #${idx + 1}`}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="light"
+                                    className="text-zinc-500"
+                                    isDisabled={data.goals[kind].length === 1}
+                                    onPress={() => removeGoal(kind, goal.id)}
+                                  >
+                                    remove
+                                  </Button>
+                                </div>
                               </CardHeader>
                               <CardBody className="space-y-3">
                                 <Input
