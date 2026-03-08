@@ -81,6 +81,7 @@ type AppSettings = {
   autosaveSeconds: number;
   showAutosaveToast: boolean;
 };
+type SectionKey = "vision" | "goals" | "today" | "projects" | "note";
 
 const AREA_LABELS: Record<LifeArea, string> = {
   health: "Health",
@@ -531,10 +532,40 @@ export default function Home() {
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Record<SectionKey, boolean>>({
+    vision: false,
+    goals: false,
+    today: false,
+    projects: false,
+    note: false,
+  });
 
   const filePickerRef = useRef<HTMLInputElement | null>(null);
   const dataRef = useRef<LifeData>(defaultData);
   const hasUnsavedRef = useRef(false);
+
+  const toggleSection = useCallback((section: SectionKey) => {
+    setCollapsedSections((prev) => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
+  }, []);
+
+  const allSectionsCollapsed = useMemo(
+    () => Object.values(collapsedSections).every(Boolean),
+    [collapsedSections]
+  );
+
+  const toggleAllSections = useCallback(() => {
+    const nextCollapsed = !allSectionsCollapsed;
+    setCollapsedSections({
+      vision: nextCollapsed,
+      goals: nextCollapsed,
+      today: nextCollapsed,
+      projects: nextCollapsed,
+      note: nextCollapsed,
+    });
+  }, [allSectionsCollapsed]);
 
   useEffect(() => {
     try {
@@ -961,6 +992,14 @@ export default function Home() {
             >
               save changes
             </Button>
+            <Button
+              size="sm"
+              variant="flat"
+              className="bg-zinc-800 text-zinc-200"
+              onPress={toggleAllSections}
+            >
+              {allSectionsCollapsed ? "expand all" : "collapse all"}
+            </Button>
             {/* 
             <Button
               size="sm"
@@ -1047,13 +1086,24 @@ export default function Home() {
             className="space-y-6"
           >
             <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
-              <CardHeader className="pb-0">
-                <div>
-                  <h2 className="text-xl font-medium">vision dashboard</h2>
-                  <p className="mt-1 text-sm text-zinc-400">all key areas in one view</p>
+              <CardHeader className="py-4">
+                <div className="flex w-full items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-medium">vision dashboard</h2>
+                    <p className="mt-1 text-sm text-zinc-400">all key areas in one view</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    className="text-zinc-400"
+                    onPress={() => toggleSection("vision")}
+                  >
+                    {collapsedSections.vision ? "expand" : "collapse"}
+                  </Button>
                 </div>
               </CardHeader>
-              <CardBody className="pt-4">
+              {!collapsedSections.vision && (
+                <CardBody className="pt-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => (
                     <Card key={area} className="border border-zinc-800 bg-zinc-950/60 shadow-none">
@@ -1083,17 +1133,29 @@ export default function Home() {
                     </Card>
                   ))}
                 </div>
-              </CardBody>
+                </CardBody>
+              )}
             </Card>
 
             <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
-              <CardHeader className="pb-0">
-                <div>
-                  <h2 className="text-xl font-medium">goals knowledge base</h2>
-                  <p className="mt-1 text-sm text-zinc-400">tag by key area + project, then filter your view</p>
+              <CardHeader className="py-4">
+                <div className="flex w-full items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-medium">goals knowledge base</h2>
+                    <p className="mt-1 text-sm text-zinc-400">tag by key area + project, then filter your view</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    className="text-zinc-400"
+                    onPress={() => toggleSection("goals")}
+                  >
+                    {collapsedSections.goals ? "expand" : "collapse"}
+                  </Button>
                 </div>
               </CardHeader>
-              <CardBody className="space-y-4 pt-4">
+              {!collapsedSections.goals && (
+                <CardBody className="space-y-4 pt-4">
                 <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm text-zinc-300">filter goals</p>
@@ -1433,7 +1495,8 @@ export default function Home() {
                     </Tab>
                   ))}
                 </Tabs>
-              </CardBody>
+                </CardBody>
+              )}
             </Card>
           </motion.div>
 
@@ -1444,13 +1507,24 @@ export default function Home() {
             className="flex flex-col gap-6"
           >
             <Card className="order-2 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
-              <CardHeader className="pb-0">
-                <div>
-                  <h2 className="text-xl font-medium">projects</h2>
-                  <p className="mt-1 text-sm text-zinc-400">group related goals under projects</p>
+              <CardHeader className="py-4">
+                <div className="flex w-full items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-medium">projects</h2>
+                    <p className="mt-1 text-sm text-zinc-400">group related goals under projects</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    className="text-zinc-400"
+                    onPress={() => toggleSection("projects")}
+                  >
+                    {collapsedSections.projects ? "expand" : "collapse"}
+                  </Button>
                 </div>
               </CardHeader>
-              <CardBody className="space-y-4 pt-4">
+              {!collapsedSections.projects && (
+                <CardBody className="space-y-4 pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <Button
                     variant="flat"
@@ -1742,17 +1816,29 @@ export default function Home() {
                     );
                   })}
                 </div>
-              </CardBody>
+                </CardBody>
+              )}
             </Card>
 
             <Card className="order-1 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
-              <CardHeader className="pb-0">
-                <div>
-                  <h2 className="text-xl font-medium">today alignment</h2>
-                  <p className="mt-1 text-sm text-zinc-400">what actually matters right now</p>
+              <CardHeader className="py-4">
+                <div className="flex w-full items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-medium">today alignment</h2>
+                    <p className="mt-1 text-sm text-zinc-400">what actually matters right now</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    className="text-zinc-400"
+                    onPress={() => toggleSection("today")}
+                  >
+                    {collapsedSections.today ? "expand" : "collapse"}
+                  </Button>
                 </div>
               </CardHeader>
-              <CardBody className="pt-4 space-y-4">
+              {!collapsedSections.today && (
+                <CardBody className="pt-4 space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Select
                     label="linked goal"
@@ -1835,15 +1921,34 @@ export default function Home() {
                   }}
                   placeholder="how are you protecting your energy today?"
                 />
-              </CardBody>
+                </CardBody>
+              )}
             </Card>
 
             <Card className="order-3 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
-              <CardBody>
-                <p className="text-sm leading-relaxed text-zinc-300">
-                  loop: review vision, tag the next action, then schedule it where your energy is strongest.
-                </p>
-              </CardBody>
+              <CardHeader className="py-4">
+                <div className="flex w-full items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-medium">system note</h2>
+                    <p className="mt-1 text-sm text-zinc-400">keep your execution loop tight</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="light"
+                    className="text-zinc-400"
+                    onPress={() => toggleSection("note")}
+                  >
+                    {collapsedSections.note ? "expand" : "collapse"}
+                  </Button>
+                </div>
+              </CardHeader>
+              {!collapsedSections.note && (
+                <CardBody>
+                  <p className="text-sm leading-relaxed text-zinc-300">
+                    loop: review vision, tag the next action, then schedule it where your energy is strongest.
+                  </p>
+                </CardBody>
+              )}
             </Card>
           </motion.div>
         </div>
