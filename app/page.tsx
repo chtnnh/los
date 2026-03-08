@@ -1962,18 +1962,23 @@ export default function Home() {
               </CardHeader>
               {!collapsedSections.projects && (
                 <CardBody className="space-y-4 pt-4">
-                {projectsEditMode && (
-                  <div className="flex items-center justify-between gap-3">
-                    <Button
-                      variant="flat"
-                      className="bg-cyan-500/20 text-cyan-300"
-                      onPress={() => setShowProjectForm((prev) => !prev)}
-                    >
-                      {showProjectForm ? "close new project" : "new project"}
-                    </Button>
-                    {showProjectForm && <span className="text-xs text-zinc-500">fill details and click add project</span>}
-                  </div>
-                )}
+                <div className="flex items-center justify-between gap-3">
+                  <Button
+                    variant="flat"
+                    className="bg-cyan-500/20 text-cyan-300"
+                    onPress={() => {
+                      if (!projectsEditMode) {
+                        setProjectsEditMode(true);
+                        setShowProjectForm(true);
+                        return;
+                      }
+                      setShowProjectForm((prev) => !prev);
+                    }}
+                  >
+                    {showProjectForm ? "close new project" : "new project"}
+                  </Button>
+                  {showProjectForm && <span className="text-xs text-zinc-500">fill details and click add project</span>}
+                </div>
 
                 {projectsEditMode && showProjectForm && (
                   <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
