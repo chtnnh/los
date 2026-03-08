@@ -16,6 +16,8 @@ type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" |
 type GoalType = "daily" | "weekly" | "monthly";
 type PriorityTag = "low" | "medium" | "high";
 type TimelineTag = "week" | "month" | "quarter" | "year" | "decade";
+type GoalSortOption = "manual" | "title-asc" | "due-soon" | "priority-high" | "status";
+type ProjectSortOption = "manual" | "title-asc" | "due-soon";
 type AttachmentSource = "url" | "local-file-ref" | "embedded-file";
 
 type AttachmentLink = {
@@ -130,6 +132,20 @@ const GOAL_LABELS: Record<GoalType, string> = {
   daily: "Daily",
   weekly: "Weekly",
   monthly: "Monthly",
+};
+
+const GOAL_SORT_LABELS: Record<GoalSortOption, string> = {
+  manual: "Manual",
+  "title-asc": "Title (A-Z)",
+  "due-soon": "Due date (soonest)",
+  "priority-high": "Priority (high first)",
+  status: "Status (open first)",
+};
+
+const PROJECT_SORT_LABELS: Record<ProjectSortOption, string> = {
+  manual: "Manual",
+  "title-asc": "Title (A-Z)",
+  "due-soon": "Due date (soonest)",
 };
 
 const EMPTY_ATTACHMENT_DRAFT: AttachmentDraft = { label: "", url: "" };
@@ -327,6 +343,66 @@ const defaultSettings: AppSettings = {
 
 function clampAutosaveSeconds(seconds: number): number {
   return Math.min(600, Math.max(15, seconds));
+}
+
+function compareDueDate(a: string, b: string): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b);
+}
+
+function sortGoalEntries(items: GoalEntry[], sortBy: GoalSortOption): GoalEntry[] {
+  if (sortBy === "manual") {
+    return items;
+  }
+
+  const priorityRank: Record<PriorityTag, number> = { high: 0, medium: 1, low: 2 };
+  const copy = [...items];
+
+  copy.sort((a, b) => {
+    if (sortBy === "title-asc") {
+      return a.title.localeCompare(b.title);
+    }
+    if (sortBy === "due-soon") {
+      return compareDueDate(a.dueDate, b.dueDate);
+    }
+    if (sortBy === "priority-high") {
+      const aRank = a.priority ? priorityRank[a.priority] : 99;
+      const bRank = b.priority ? priorityRank[b.priority] : 99;
+      if (aRank !== bRank) {
+        return aRank - bRank;
+      }
+      return a.title.localeCompare(b.title);
+    }
+    if (sortBy === "status") {
+      if (a.completed !== b.completed) {
+        return Number(a.completed) - Number(b.completed);
+      }
+      return a.title.localeCompare(b.title);
+    }
+    return 0;
+  });
+
+  return copy;
+}
+
+function sortProjectEntries(items: ProjectEntry[], sortBy: ProjectSortOption): ProjectEntry[] {
+  if (sortBy === "manual") {
+    return items;
+  }
+
+  const copy = [...items];
+  copy.sort((a, b) => {
+    if (sortBy === "title-asc") {
+      return a.title.localeCompare(b.title);
+    }
+    if (sortBy === "due-soon") {
+      return compareDueDate(a.dueDate, b.dueDate);
+    }
+    return 0;
+  });
+  return copy;
 }
 
 function normalizeSettings(parsed: unknown): AppSettings {
@@ -614,6 +690,8 @@ export default function Home() {
   const [activeGoalEditorRef, setActiveGoalEditorRef] = useState<string | null>(null);
   const [projectsEditMode, setProjectsEditMode] = useState(false);
   const [activeProjectEditorId, setActiveProjectEditorId] = useState<string | null>(null);
+  const [goalSort, setGoalSort] = useState<GoalSortOption>("manual");
+  const [projectSort, setProjectSort] = useState<ProjectSortOption>("manual");
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Record<SectionKey, boolean>>({
@@ -746,6 +824,17 @@ export default function Home() {
       ),
     [data.goals]
   );
+
+  const sortedGoals = useMemo(
+    () => ({
+      daily: sortGoalEntries(filteredGoals.daily, goalSort),
+      weekly: sortGoalEntries(filteredGoals.weekly, goalSort),
+      monthly: sortGoalEntries(filteredGoals.monthly, goalSort),
+    }),
+    [filteredGoals, goalSort]
+  );
+
+  const sortedProjects = useMemo(() => sortProjectEntries(data.projects, projectSort), [data.projects, projectSort]);
 
   const updateGoal = (kind: GoalType, goalId: string, updater: (goal: GoalEntry) => GoalEntry) => {
     setData((prev) => ({
@@ -1394,6 +1483,34 @@ export default function Home() {
                       })}
                     </div>
                   )}
+                  <div className="max-w-xs">
+                    <Select
+                      label="sort goals"
+                      labelPlacement="outside"
+                      variant="bordered"
+                      selectedKeys={[goalSort]}
+                      onSelectionChange={(keys) => {
+                        const selected = Array.from(keys as Set<string>)[0] as GoalSortOption | undefined;
+                        if (selected) {
+                          setGoalSort(selected);
+                        }
+                      }}
+                      classNames={{
+                        trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        value: "!text-zinc-100",
+                        label: "text-zinc-400",
+                        selectorIcon: "text-zinc-400",
+                        listboxWrapper: "bg-zinc-900 text-zinc-100",
+                        popoverContent: "bg-zinc-900 border border-zinc-700",
+                      }}
+                    >
+                      {(Object.keys(GOAL_SORT_LABELS) as GoalSortOption[]).map((option) => (
+                        <SelectItem key={option} className="text-zinc-100">
+                          {GOAL_SORT_LABELS[option]}
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  </div>
                 </div>
 
                 <Tabs variant="underlined" color="primary">
@@ -1401,7 +1518,7 @@ export default function Home() {
                     <Tab key={kind} title={GOAL_LABELS[kind]}>
                       <div className="mb-3 mt-1 flex items-center justify-between gap-3">
                         <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
-                          showing {filteredGoals[kind].length} of {data.goals[kind].length}
+                          showing {sortedGoals[kind].length} of {data.goals[kind].length}
                         </p>
                         <Button size="sm" variant="flat" className="bg-zinc-800 text-zinc-200" onPress={() => addGoal(kind)}>
                           add goal
@@ -1409,7 +1526,7 @@ export default function Home() {
                       </div>
 
                       <div className="space-y-3">
-                        {filteredGoals[kind].map((goal, idx) => {
+                        {sortedGoals[kind].map((goal, idx) => {
                           const draftKey = goalDraftKey(kind, goal.id);
                           const draft = goalAttachmentDrafts[draftKey] ?? EMPTY_ATTACHMENT_DRAFT;
                           const goalRef = `${kind}:${goal.id}`;
@@ -1796,7 +1913,7 @@ export default function Home() {
                           );
                         })}
 
-                        {filteredGoals[kind].length === 0 && (
+                        {sortedGoals[kind].length === 0 && (
                           <p className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">
                             no goals match your current filters.
                           </p>
@@ -2023,9 +2140,38 @@ export default function Home() {
                   </div>
                 )}
 
+                <div className="max-w-xs">
+                  <Select
+                    label="sort projects"
+                    labelPlacement="outside"
+                    variant="bordered"
+                    selectedKeys={[projectSort]}
+                    onSelectionChange={(keys) => {
+                      const selected = Array.from(keys as Set<string>)[0] as ProjectSortOption | undefined;
+                      if (selected) {
+                        setProjectSort(selected);
+                      }
+                    }}
+                    classNames={{
+                      trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "!text-zinc-100",
+                      label: "text-zinc-400",
+                      selectorIcon: "text-zinc-400",
+                      listboxWrapper: "bg-zinc-900 text-zinc-100",
+                      popoverContent: "bg-zinc-900 border border-zinc-700",
+                    }}
+                  >
+                    {(Object.keys(PROJECT_SORT_LABELS) as ProjectSortOption[]).map((option) => (
+                      <SelectItem key={option} className="text-zinc-100">
+                        {PROJECT_SORT_LABELS[option]}
+                      </SelectItem>
+                    ))}
+                  </Select>
+                </div>
+
                 <div className="space-y-3 border-t border-zinc-800 pt-4">
-                  {data.projects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
-                  {data.projects.map((project) => {
+                  {sortedProjects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
+                  {sortedProjects.map((project) => {
                     const draft = projectAttachmentDrafts[project.id] ?? EMPTY_ATTACHMENT_DRAFT;
                     const isProjectEditing = projectsEditMode || activeProjectEditorId === project.id;
                     const handleProjectCardClick = (event: MouseEvent<HTMLElement>) => {

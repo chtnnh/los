@@ -44,18 +44,18 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "makesomething ☀️",
-  description: "build your first app with ai. look what i made!",
+  title: "carbon's life operating system",
+  description: "align vision, goals, projects, and daily focus in one system.",
   metadataBase: new URL("https://makesomething.so"),
   openGraph: {
-    title: "makesomething ☀️",
-    description: "look what i made!",
+    title: "carbon's life operating system",
+    description: "align vision, goals, projects, and daily focus in one system.",
     siteName: "makesomething",
   },
   twitter: {
     card: "summary_large_image",
-    title: "makesomething ☀️",
-    description: "look what i made!",
+    title: "carbon's life operating system",
+    description: "align vision, goals, projects, and daily focus in one system.",
   },
 };
 
