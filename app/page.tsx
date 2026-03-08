@@ -2,9 +2,9 @@
 
 import { Button, Card, CardBody, CardHeader, Chip, Input, Tab, Tabs, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type LifeArea = "health" | "work" | "relationships" | "money" | "mind";
+type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" | "soul";
 type GoalType = "daily" | "weekly" | "monthly";
 
 type LifeData = {
@@ -20,8 +20,18 @@ const AREA_LABELS: Record<LifeArea, string> = {
   health: "Health",
   work: "Work",
   relationships: "Relationships",
-  money: "Money",
-  mind: "Mind",
+  financial: "Financial",
+  learning: "Learning",
+  soul: "Soul",
+};
+
+const AREA_TAG_CLASSES: Record<LifeArea, string> = {
+  health: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40",
+  work: "bg-sky-500/20 text-sky-300 border border-sky-500/40",
+  relationships: "bg-rose-500/20 text-rose-300 border border-rose-500/40",
+  financial: "bg-amber-500/20 text-amber-300 border border-amber-500/40",
+  learning: "bg-violet-500/20 text-violet-300 border border-violet-500/40",
+  soul: "bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/40",
 };
 
 const GOAL_LABELS: Record<GoalType, string> = {
@@ -35,8 +45,9 @@ const defaultData: LifeData = {
     health: "",
     work: "",
     relationships: "",
-    money: "",
-    mind: "",
+    financial: "",
+    learning: "",
+    soul: "",
   },
   goals: {
     daily: ["", "", ""],
@@ -47,27 +58,62 @@ const defaultData: LifeData = {
   energyPlan: "",
 };
 
+function normalizeData(parsed: unknown): LifeData {
+  if (!parsed || typeof parsed !== "object") {
+    return defaultData;
+  }
+
+  const value = parsed as {
+    visions?: Record<string, string>;
+    goals?: Record<string, string[]>;
+    todayFocus?: string;
+    energyPlan?: string;
+  };
+
+  return {
+    visions: {
+      health: value.visions?.health ?? "",
+      work: value.visions?.work ?? "",
+      relationships: value.visions?.relationships ?? "",
+      financial: value.visions?.financial ?? value.visions?.money ?? "",
+      learning: value.visions?.learning ?? value.visions?.mind ?? "",
+      soul: value.visions?.soul ?? "",
+    },
+    goals: {
+      daily: Array.isArray(value.goals?.daily) ? value.goals?.daily.slice(0, 3) : ["", "", ""],
+      weekly: Array.isArray(value.goals?.weekly) ? value.goals?.weekly.slice(0, 3) : ["", "", ""],
+      monthly: Array.isArray(value.goals?.monthly) ? value.goals?.monthly.slice(0, 3) : ["", "", ""],
+    },
+    todayFocus: value.todayFocus ?? "",
+    energyPlan: value.energyPlan ?? "",
+  };
+}
+
 export default function Home() {
   const [data, setData] = useState<LifeData>(defaultData);
-  const [activeArea, setActiveArea] = useState<LifeArea>("health");
-  const [saved, setSaved] = useState(false);
+  const hasLoadedFromStorage = useRef(false);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as LifeData;
-      setData({ ...defaultData, ...parsed });
+      if (!raw) {
+        hasLoadedFromStorage.current = true;
+        return;
+      }
+      setData(normalizeData(JSON.parse(raw) as unknown));
     } catch {
-      setData(defaultData);
+      // keep default data if parsing fails
+    } finally {
+      hasLoadedFromStorage.current = true;
     }
   }, []);
 
   useEffect(() => {
+    if (!hasLoadedFromStorage.current) {
+      return;
+    }
+
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    setSaved(true);
-    const t = setTimeout(() => setSaved(false), 1000);
-    return () => clearTimeout(t);
   }, [data]);
 
   const filledCount = useMemo(() => {
@@ -104,7 +150,6 @@ export default function Home() {
             >
               reset
             </Button>
-            {saved && <span className="text-xs text-zinc-400">saved</span>}
           </div>
         </motion.div>
 
@@ -118,38 +163,40 @@ export default function Home() {
             <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
               <CardHeader className="pb-0">
                 <div>
-                  <h2 className="text-xl font-medium">vision by life area</h2>
-                  <p className="mt-1 text-sm text-zinc-400">one sharp sentence for each area</p>
+                  <h2 className="text-xl font-medium">vision dashboard</h2>
+                  <p className="mt-1 text-sm text-zinc-400">all key areas in one view</p>
                 </div>
               </CardHeader>
               <CardBody className="pt-4">
-                <Tabs
-                  selectedKey={activeArea}
-                  onSelectionChange={(key) => setActiveArea(key as LifeArea)}
-                  variant="underlined"
-                  color="primary"
-                >
+                <div className="grid gap-4 sm:grid-cols-2">
                   {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => (
-                    <Tab key={area} title={AREA_LABELS[area]}>
-                      <Textarea
-                        minRows={4}
-                        variant="bordered"
-                        value={data.visions[area]}
-                        onValueChange={(value) =>
-                          setData((prev) => ({
-                            ...prev,
-                            visions: { ...prev.visions, [area]: value },
-                          }))
-                        }
-                        classNames={{
-                          inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                          input: "text-zinc-100 placeholder:text-zinc-500",
-                        }}
-                        placeholder={`what's your long-term vision for ${AREA_LABELS[area].toLowerCase()}?`}
-                      />
-                    </Tab>
+                    <Card key={area} className="border border-zinc-800 bg-zinc-950/60 shadow-none">
+                      <CardHeader className="pb-2">
+                        <Chip variant="flat" className={AREA_TAG_CLASSES[area]}>
+                          {AREA_LABELS[area]}
+                        </Chip>
+                      </CardHeader>
+                      <CardBody>
+                        <Textarea
+                          minRows={3}
+                          variant="bordered"
+                          value={data.visions[area]}
+                          onValueChange={(value) =>
+                            setData((prev) => ({
+                              ...prev,
+                              visions: { ...prev.visions, [area]: value },
+                            }))
+                          }
+                          classNames={{
+                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                            input: "text-zinc-100 placeholder:text-zinc-500",
+                          }}
+                          placeholder={`vision for ${AREA_LABELS[area].toLowerCase()}`}
+                        />
+                      </CardBody>
+                    </Card>
                   ))}
-                </Tabs>
+                </div>
               </CardBody>
             </Card>
 
