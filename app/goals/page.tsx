@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Textarea } from "@heroui/react";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   AREA_LABELS,
@@ -27,6 +28,7 @@ function getGoalRef(goal: GoalWithType): string {
 }
 
 export default function GoalsPage() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState(defaultLifeData);
   const [selectedGoalRef, setSelectedGoalRef] = useState("");
   const [editMode, setEditMode] = useState(false);
@@ -35,10 +37,17 @@ export default function GoalsPage() {
     const frame = window.requestAnimationFrame(() => {
       const loaded = loadLifeDataFromStorage();
       setData(loaded);
-      const firstGoal =
-        loaded.goals.daily[0] ??
-        loaded.goals.weekly[0] ??
-        loaded.goals.monthly[0];
+
+      const requestedGoalRef = searchParams.get("goalRef")?.trim() ?? "";
+      const availableGoalRefs = (["daily", "weekly", "monthly"] as const).flatMap((goalType) =>
+        loaded.goals[goalType].map((goal) => `${goalType}:${goal.id}`),
+      );
+      if (requestedGoalRef && availableGoalRefs.includes(requestedGoalRef)) {
+        setSelectedGoalRef(requestedGoalRef);
+        return;
+      }
+
+      const firstGoal = loaded.goals.daily[0] ?? loaded.goals.weekly[0] ?? loaded.goals.monthly[0];
       if (firstGoal) {
         const firstType: GoalType =
           loaded.goals.daily[0]?.id === firstGoal.id ? "daily" : loaded.goals.weekly[0]?.id === firstGoal.id ? "weekly" : "monthly";
@@ -46,7 +55,7 @@ export default function GoalsPage() {
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [searchParams]);
 
   const allGoals = useMemo<GoalWithType[]>(
     () =>

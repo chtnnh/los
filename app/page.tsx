@@ -942,6 +942,8 @@ export default function Home() {
   );
 
   const sortedProjects = useMemo(() => sortProjectEntries(data.projects, projectSort), [data.projects, projectSort]);
+  const todayGoalsViewHref = data.todayGoalRef ? `/goals?goalRef=${encodeURIComponent(data.todayGoalRef)}` : "/goals";
+  const todayProjectsViewHref = data.todayProjectId ? `/projects?projectId=${encodeURIComponent(data.todayProjectId)}` : "/projects";
 
   const updateGoal = (kind: GoalType, goalId: string, updater: (goal: GoalEntry) => GoalEntry) => {
     setData((prev) => ({
@@ -2806,38 +2808,32 @@ export default function Home() {
                 {!todayEditMode && (
                   <>
                     <div className="flex flex-wrap gap-2">
-                      <Button as={Link} href="/goals" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                      <Button as={Link} href={todayGoalsViewHref} size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
                         open goals view
                       </Button>
-                      <Button as={Link} href="/projects" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                      <Button as={Link} href={todayProjectsViewHref} size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
                         open projects view
                       </Button>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {data.todayGoalRef && (
                         <Button
+                          as={Link}
+                          href={todayGoalsViewHref}
                           size="sm"
                           variant="flat"
                           className="bg-blue-500/20 text-blue-300 border border-blue-500/40"
-                          onPress={() => {
-                            setCollapsedSections((prev) => ({ ...prev, goals: false }));
-                            setGoalsEditMode(false);
-                            setActiveGoalEditorRef(data.todayGoalRef);
-                          }}
                         >
                           {goalReferenceOptions.find((option) => option.ref === data.todayGoalRef)?.label ?? "linked goal"}
                         </Button>
                       )}
                       {data.todayProjectId && (
                         <Button
+                          as={Link}
+                          href={todayProjectsViewHref}
                           size="sm"
                           variant="flat"
                           className="bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
-                          onPress={() => {
-                            setCollapsedSections((prev) => ({ ...prev, projects: false }));
-                            setProjectsEditMode(false);
-                            setActiveProjectEditorId(data.todayProjectId);
-                          }}
                         >
                           {data.projects.find((project) => project.id === data.todayProjectId)?.title ?? "linked project"}
                         </Button>

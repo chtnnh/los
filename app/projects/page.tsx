@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Button, Card, CardBody, CardHeader, Chip, Input, Progress, Select, SelectItem, Textarea } from "@heroui/react";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   AREA_LABELS,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/life-os-storage";
 
 export default function ProjectsPage() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState(defaultLifeData);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [editMode, setEditMode] = useState(false);
@@ -27,12 +29,19 @@ export default function ProjectsPage() {
     const frame = window.requestAnimationFrame(() => {
       const loaded = loadLifeDataFromStorage();
       setData(loaded);
-      if (loaded.projects[0]) {
+
+      const requestedProjectId = searchParams.get("projectId")?.trim() ?? "";
+      if (requestedProjectId && loaded.projects.some((project) => project.id === requestedProjectId)) {
+        setSelectedProjectId(requestedProjectId);
+        return;
+      }
+
+      if (loaded.projects[0]?.id) {
         setSelectedProjectId(loaded.projects[0].id);
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [searchParams]);
 
   const selectedProject = useMemo(
     () => data.projects.find((project) => project.id === selectedProjectId) ?? null,
