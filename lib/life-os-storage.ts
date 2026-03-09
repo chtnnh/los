@@ -13,6 +13,18 @@ export type AttachmentLink = {
   source: AttachmentSource;
 };
 
+export type SubGoalEntry = {
+  id: string;
+  title: string;
+  completed: boolean;
+  description: string;
+  dueDate: string;
+  priority: PriorityTag | "";
+  timeline: TimelineTag | "";
+  attachments: AttachmentLink[];
+  children: SubGoalEntry[];
+};
+
 export type GoalEntry = {
   id: string;
   title: string;
@@ -24,6 +36,7 @@ export type GoalEntry = {
   areaTags: LifeArea[];
   projectIds: string[];
   attachments: AttachmentLink[];
+  subGoals: SubGoalEntry[];
 };
 
 export type ProjectEntry = {
@@ -157,6 +170,43 @@ function normalizeGoalEntries(value: unknown): GoalEntry[] {
     return [];
   }
 
+  const normalizeSubGoals = (subGoalValue: unknown, path = "sub"): SubGoalEntry[] => {
+    if (!Array.isArray(subGoalValue)) {
+      return [];
+    }
+
+    return subGoalValue
+      .map((item, index): SubGoalEntry | null => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+
+        const subGoal = item as Partial<SubGoalEntry>;
+        const priority = subGoal.priority;
+        const timeline = subGoal.timeline;
+        return {
+          id: typeof subGoal.id === "string" && subGoal.id.length > 0 ? subGoal.id : `${path}-${index + 1}`,
+          title: typeof subGoal.title === "string" ? subGoal.title : "",
+          completed: Boolean(subGoal.completed),
+          description: typeof subGoal.description === "string" ? subGoal.description : "",
+          dueDate: typeof subGoal.dueDate === "string" ? subGoal.dueDate : "",
+          priority: priority === "low" || priority === "medium" || priority === "high" ? priority : "",
+          timeline:
+            timeline === "day" ||
+            timeline === "week" ||
+            timeline === "month" ||
+            timeline === "quarter" ||
+            timeline === "year" ||
+            timeline === "decade"
+              ? timeline
+              : "",
+          attachments: normalizeAttachments(subGoal.attachments),
+          children: normalizeSubGoals(subGoal.children, `${path}-${index + 1}`),
+        };
+      })
+      .filter((subGoal): subGoal is SubGoalEntry => subGoal !== null);
+  };
+
   return value
     .map((item): GoalEntry | null => {
       if (!item || typeof item !== "object") {
@@ -185,6 +235,7 @@ function normalizeGoalEntries(value: unknown): GoalEntry[] {
           ? goal.projectIds.filter((projectId): projectId is string => typeof projectId === "string")
           : [],
         attachments: normalizeAttachments(goal.attachments),
+        subGoals: normalizeSubGoals(goal.subGoals, `${typeof goal.id === "string" && goal.id.length > 0 ? goal.id : "goal"}-sub`),
       };
     })
     .filter((goal): goal is GoalEntry => goal !== null && goal.id.length > 0);

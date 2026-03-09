@@ -28,6 +28,18 @@ type AttachmentLink = {
   source: AttachmentSource;
 };
 
+type SubGoalEntry = {
+  id: string;
+  title: string;
+  completed: boolean;
+  description: string;
+  dueDate: string;
+  priority: PriorityTag | "";
+  timeline: TimelineTag | "";
+  attachments: AttachmentLink[];
+  children: SubGoalEntry[];
+};
+
 type GoalEntry = {
   id: string;
   title: string;
@@ -39,6 +51,7 @@ type GoalEntry = {
   areaTags: LifeArea[];
   projectIds: string[];
   attachments: AttachmentLink[];
+  subGoals: SubGoalEntry[];
 };
 
 type ProjectEntry = {
@@ -287,6 +300,175 @@ function sanitizeAttachments(attachments: AttachmentLink[]): AttachmentLink[] {
     .filter((attachment): attachment is AttachmentLink => attachment !== null);
 }
 
+function createEmptySubGoal(id: string): SubGoalEntry {
+  return {
+    id,
+    title: "",
+    completed: false,
+    description: "",
+    dueDate: "",
+    priority: "",
+    timeline: "",
+    attachments: [],
+    children: [],
+  };
+}
+
+function normalizeSubGoal(entry: unknown, fallbackId: string): SubGoalEntry {
+  if (!entry || typeof entry !== "object") {
+    return createEmptySubGoal(fallbackId);
+  }
+
+  const value = entry as {
+    id?: string;
+    title?: string;
+    completed?: unknown;
+    description?: string;
+    dueDate?: string;
+    priority?: string;
+    timeline?: string;
+    attachments?: unknown[];
+    children?: unknown[];
+  };
+
+  const priority = value.priority;
+  const timeline = value.timeline;
+
+  return {
+    id: typeof value.id === "string" && value.id.length > 0 ? value.id : fallbackId,
+    title: typeof value.title === "string" ? value.title : "",
+    completed: typeof value.completed === "boolean" ? value.completed : false,
+    description: typeof value.description === "string" ? value.description : "",
+    dueDate: typeof value.dueDate === "string" ? value.dueDate : "",
+    priority: priority === "low" || priority === "medium" || priority === "high" ? priority : "",
+    timeline:
+      timeline === "day" || timeline === "week" || timeline === "month" || timeline === "quarter" || timeline === "year" || timeline === "decade"
+        ? timeline
+        : "",
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments
+          .map((attachment, attachmentIndex) => normalizeAttachment(attachment, attachmentIndex))
+          .filter((attachment): attachment is AttachmentLink => attachment !== null)
+      : [],
+    children: Array.isArray(value.children)
+      ? value.children.map((child, idx) => normalizeSubGoal(child, `${fallbackId}-${idx + 1}`))
+      : [],
+  };
+}
+
+function normalizeSubGoals(source: unknown, prefix: string): SubGoalEntry[] {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source.map((entry, idx) => normalizeSubGoal(entry, `${prefix}-sub-${idx + 1}`));
+}
+
+function sanitizeSubGoalsForStorage(subGoals: SubGoalEntry[]): SubGoalEntry[] {
+  return subGoals.map((subGoal) => ({
+    ...subGoal,
+    title: subGoal.title.trim(),
+    description: subGoal.description.trim(),
+    dueDate: subGoal.dueDate.trim(),
+    attachments: sanitizeAttachments(subGoal.attachments),
+    children: sanitizeSubGoalsForStorage(subGoal.children),
+  }));
+}
+
+function countSubGoalsProgress(subGoals: SubGoalEntry[]): { total: number; completed: number } {
+  return subGoals.reduce(
+    (acc, subGoal) => {
+      const nested = countSubGoalsProgress(subGoal.children);
+      return {
+        total: acc.total + 1 + nested.total,
+        completed: acc.completed + (subGoal.completed ? 1 : 0) + nested.completed,
+      };
+    },
+    { total: 0, completed: 0 }
+  );
+}
+
+function getGoalCompletionFraction(goal: GoalEntry): number {
+  const subGoalProgress = countSubGoalsProgress(goal.subGoals);
+  if (subGoalProgress.total > 0) {
+    return subGoalProgress.completed / subGoalProgress.total;
+  }
+  return goal.completed ? 1 : 0;
+}
+
+function updateSubGoalById(subGoals: SubGoalEntry[], subGoalId: string, updater: (subGoal: SubGoalEntry) => SubGoalEntry): SubGoalEntry[] {
+  let changed = false;
+  const next = subGoals.map((subGoal) => {
+    if (subGoal.id === subGoalId) {
+      changed = true;
+      return updater(subGoal);
+    }
+
+    const nextChildren = updateSubGoalById(subGoal.children, subGoalId, updater);
+    if (nextChildren !== subGoal.children) {
+      changed = true;
+      return {
+        ...subGoal,
+        children: nextChildren,
+      };
+    }
+
+    return subGoal;
+  });
+
+  return changed ? next : subGoals;
+}
+
+function addChildSubGoalById(subGoals: SubGoalEntry[], parentId: string, child: SubGoalEntry): SubGoalEntry[] {
+  let changed = false;
+  const next = subGoals.map((subGoal) => {
+    if (subGoal.id === parentId) {
+      changed = true;
+      return {
+        ...subGoal,
+        children: [...subGoal.children, child],
+      };
+    }
+
+    const nextChildren = addChildSubGoalById(subGoal.children, parentId, child);
+    if (nextChildren !== subGoal.children) {
+      changed = true;
+      return {
+        ...subGoal,
+        children: nextChildren,
+      };
+    }
+    return subGoal;
+  });
+
+  return changed ? next : subGoals;
+}
+
+function removeSubGoalById(subGoals: SubGoalEntry[], subGoalId: string): SubGoalEntry[] {
+  let changed = false;
+  const next: SubGoalEntry[] = [];
+
+  for (const subGoal of subGoals) {
+    if (subGoal.id === subGoalId) {
+      changed = true;
+      continue;
+    }
+
+    const nextChildren = removeSubGoalById(subGoal.children, subGoalId);
+    if (nextChildren !== subGoal.children) {
+      changed = true;
+      next.push({
+        ...subGoal,
+        children: nextChildren,
+      });
+      continue;
+    }
+
+    next.push(subGoal);
+  }
+
+  return changed ? next : subGoals;
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -323,6 +505,7 @@ function createEmptyGoal(id: string): GoalEntry {
     areaTags: [],
     projectIds: [],
     attachments: [],
+    subGoals: [],
   };
 }
 
@@ -521,6 +704,7 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
     areaTags?: string[];
     projectIds?: string[];
     attachments?: unknown[];
+    subGoals?: unknown[];
   };
 
   const priority = value.priority;
@@ -555,6 +739,7 @@ function normalizeGoal(goal: unknown, kind: GoalType, index: number): GoalEntry 
           .map((attachment, attachmentIndex) => normalizeAttachment(attachment, attachmentIndex))
           .filter((attachment): attachment is AttachmentLink => attachment !== null)
       : [],
+    subGoals: normalizeSubGoals(value.subGoals, fallbackId),
   };
 }
 
@@ -678,6 +863,7 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
         description: goal.description.trim(),
         dueDate: goal.dueDate.trim(),
         attachments: sanitizeAttachments(goal.attachments),
+        subGoals: sanitizeSubGoalsForStorage(goal.subGoals),
       })),
       weekly: data.goals.weekly.map((goal) => ({
         ...goal,
@@ -685,6 +871,7 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
         description: goal.description.trim(),
         dueDate: goal.dueDate.trim(),
         attachments: sanitizeAttachments(goal.attachments),
+        subGoals: sanitizeSubGoalsForStorage(goal.subGoals),
       })),
       monthly: data.goals.monthly.map((goal) => ({
         ...goal,
@@ -692,6 +879,7 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
         description: goal.description.trim(),
         dueDate: goal.dueDate.trim(),
         attachments: sanitizeAttachments(goal.attachments),
+        subGoals: sanitizeSubGoalsForStorage(goal.subGoals),
       })),
     },
     projects: data.projects.map((project) => ({
@@ -708,16 +896,27 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
   };
 }
 
+function cloneLifeData(data: LifeData): LifeData {
+  return JSON.parse(JSON.stringify(data)) as LifeData;
+}
+
+type UndoAction = {
+  id: string;
+  undo: () => void;
+};
+
 export default function Home() {
   const [data, setData] = useState<LifeData>(defaultData);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [filters, setFilters] = useState<GoalFilters>({ areaTags: [], projectIds: [] });
   const [projectDraft, setProjectDraft] = useState<ProjectDraft>(createEmptyProjectDraft);
   const [goalAttachmentDrafts, setGoalAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
+  const [subGoalAttachmentDrafts, setSubGoalAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
   const [projectAttachmentDrafts, setProjectAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>(JSON.stringify(defaultData));
   const [lastSavedAt, setLastSavedAt] = useState<string>("");
   const [toastMessage, setToastMessage] = useState<string>("");
+  const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
   const [visionEditMode, setVisionEditMode] = useState(false);
@@ -797,9 +996,12 @@ export default function Home() {
       return;
     }
 
-    const timer = setTimeout(() => setToastMessage(""), 2200);
+    const timer = setTimeout(() => {
+      setToastMessage("");
+      setUndoAction(null);
+    }, undoAction ? 6000 : 2200);
     return () => clearTimeout(timer);
-  }, [toastMessage]);
+  }, [toastMessage, undoAction]);
 
   const hasUnsavedChanges = useMemo(() => {
     if (!isLoaded) {
@@ -902,12 +1104,14 @@ export default function Home() {
         const linkedGoals = allGoals.filter((goal) => goal.areaTags.includes(area));
         const goalsCount = linkedGoals.length;
         const completedGoals = linkedGoals.filter((goal) => goal.completed).length;
+        const completionFraction =
+          goalsCount === 0 ? 0 : linkedGoals.reduce((sum, goal) => sum + getGoalCompletionFraction(goal), 0) / goalsCount;
         const projectsCount = data.projects.filter((project) => project.areaTags.includes(area)).length;
         acc[area] = {
           completedGoals,
           goalsCount,
           projectsCount,
-          completionPercent: goalsCount === 0 ? 0 : Math.round((completedGoals / goalsCount) * 100),
+          completionPercent: Math.round(completionFraction * 100),
         };
         return acc;
       }, {} as Record<LifeArea, AreaProgressStats>),
@@ -920,10 +1124,12 @@ export default function Home() {
         const linkedGoals = allGoals.filter((goal) => goal.projectIds.includes(project.id));
         const goalsCount = linkedGoals.length;
         const completedGoals = linkedGoals.filter((goal) => goal.completed).length;
+        const completionFraction =
+          goalsCount === 0 ? 0 : linkedGoals.reduce((sum, goal) => sum + getGoalCompletionFraction(goal), 0) / goalsCount;
         acc[project.id] = {
           completedGoals,
           goalsCount,
-          completionPercent: goalsCount === 0 ? 0 : Math.round((completedGoals / goalsCount) * 100),
+          completionPercent: Math.round(completionFraction * 100),
         };
         return acc;
       }, {}),
@@ -945,6 +1151,14 @@ export default function Home() {
   const todayGoalsViewHref = data.todayGoalRef ? `/goals?goalRef=${encodeURIComponent(data.todayGoalRef)}` : "/goals";
   const todayProjectsViewHref = data.todayProjectId ? `/projects?projectId=${encodeURIComponent(data.todayProjectId)}` : "/projects";
 
+  const registerUndoAction = (label: string, undo: () => void) => {
+    setUndoAction({
+      id: createId("undo"),
+      undo,
+    });
+    setToastMessage(`${label} removed`);
+  };
+
   const updateGoal = (kind: GoalType, goalId: string, updater: (goal: GoalEntry) => GoalEntry) => {
     setData((prev) => ({
       ...prev,
@@ -953,6 +1167,89 @@ export default function Home() {
         [kind]: prev.goals[kind].map((goal) => (goal.id === goalId ? updater(goal) : goal)),
       },
     }));
+  };
+
+  const updateGoalSubGoals = (
+    kind: GoalType,
+    goalId: string,
+    updater: (subGoals: SubGoalEntry[]) => SubGoalEntry[]
+  ) => {
+    updateGoal(kind, goalId, (goal) => ({
+      ...goal,
+      subGoals: updater(goal.subGoals),
+    }));
+  };
+
+  const addRootSubGoal = (kind: GoalType, goalId: string) => {
+    const subGoalId = createId("subgoal");
+    updateGoalSubGoals(kind, goalId, (subGoals) => [
+      ...subGoals,
+      {
+        ...createEmptySubGoal(subGoalId),
+        title: "new sub-goal",
+      },
+    ]);
+  };
+
+  const addChildSubGoal = (kind: GoalType, goalId: string, parentSubGoalId: string) => {
+    const subGoalId = createId("subgoal");
+    updateGoalSubGoals(kind, goalId, (subGoals) =>
+      addChildSubGoalById(subGoals, parentSubGoalId, {
+        ...createEmptySubGoal(subGoalId),
+        title: "new sub-goal",
+      })
+    );
+  };
+
+  const toggleSubGoalCompleted = (kind: GoalType, goalId: string, subGoalId: string) => {
+    updateGoalSubGoals(kind, goalId, (subGoals) =>
+      updateSubGoalById(subGoals, subGoalId, (subGoal) => ({
+        ...subGoal,
+        completed: !subGoal.completed,
+      }))
+    );
+  };
+
+  const updateSubGoalTitle = (kind: GoalType, goalId: string, subGoalId: string, title: string) => {
+    updateGoalSubGoals(kind, goalId, (subGoals) =>
+      updateSubGoalById(subGoals, subGoalId, (subGoal) => ({
+        ...subGoal,
+        title,
+      }))
+    );
+  };
+
+  const removeSubGoal = (kind: GoalType, goalId: string, subGoalId: string) => {
+    let snapshot: LifeData | null = null;
+
+    setData((prev) => {
+      const currentGoal = prev.goals[kind].find((goal) => goal.id === goalId);
+      if (!currentGoal) {
+        return prev;
+      }
+
+      const nextSubGoals = removeSubGoalById(currentGoal.subGoals, subGoalId);
+      if (nextSubGoals === currentGoal.subGoals) {
+        return prev;
+      }
+
+      snapshot = cloneLifeData(prev);
+      return {
+        ...prev,
+        goals: {
+          ...prev.goals,
+          [kind]: prev.goals[kind].map((goal) => (goal.id === goalId ? { ...goal, subGoals: nextSubGoals } : goal)),
+        },
+      };
+    });
+
+    if (snapshot) {
+      const restore = snapshot;
+      registerUndoAction("sub-goal", () => {
+        setData(restore);
+        dataRef.current = restore;
+      });
+    }
   };
 
   const updateProject = (projectId: string, updater: (project: ProjectEntry) => ProjectEntry) => {
@@ -975,15 +1272,30 @@ export default function Home() {
 
   const removeGoal = (kind: GoalType, goalId: string) => {
     const refToRemove = `${kind}:${goalId}`;
-    setData((prev) => ({
-      ...prev,
-      goals: {
-        ...prev.goals,
-        [kind]:
-          prev.goals[kind].length === 1 ? prev.goals[kind] : prev.goals[kind].filter((goal) => goal.id !== goalId),
-      },
-      todayGoalRef: prev.todayGoalRef === refToRemove ? "" : prev.todayGoalRef,
-    }));
+    let snapshot: LifeData | null = null;
+    setData((prev) => {
+      if (prev.goals[kind].length === 1) {
+        return prev;
+      }
+
+      snapshot = cloneLifeData(prev);
+      return {
+        ...prev,
+        goals: {
+          ...prev.goals,
+          [kind]: prev.goals[kind].filter((goal) => goal.id !== goalId),
+        },
+        todayGoalRef: prev.todayGoalRef === refToRemove ? "" : prev.todayGoalRef,
+      };
+    });
+
+    if (snapshot) {
+      const restore = snapshot;
+      registerUndoAction("goal", () => {
+        setData(restore);
+        dataRef.current = restore;
+      });
+    }
   };
 
   const addProject = () => {
@@ -1015,30 +1327,55 @@ export default function Home() {
   };
 
   const removeProject = (projectId: string) => {
-    setData((prev) => ({
-      ...prev,
-      projects: prev.projects.filter((project) => project.id !== projectId),
-      goals: {
-        daily: prev.goals.daily.map((goal) => ({
-          ...goal,
-          projectIds: goal.projectIds.filter((id) => id !== projectId),
-        })),
-        weekly: prev.goals.weekly.map((goal) => ({
-          ...goal,
-          projectIds: goal.projectIds.filter((id) => id !== projectId),
-        })),
-        monthly: prev.goals.monthly.map((goal) => ({
-          ...goal,
-          projectIds: goal.projectIds.filter((id) => id !== projectId),
-        })),
-      },
-      todayProjectId: prev.todayProjectId === projectId ? "" : prev.todayProjectId,
-    }));
+    let dataSnapshot: LifeData | null = null;
+    let filtersSnapshot: GoalFilters | null = null;
 
-    setFilters((prev) => ({
-      ...prev,
-      projectIds: prev.projectIds.filter((id) => id !== projectId),
-    }));
+    setData((prev) => {
+      if (!prev.projects.some((project) => project.id === projectId)) {
+        return prev;
+      }
+
+      dataSnapshot = cloneLifeData(prev);
+      return {
+        ...prev,
+        projects: prev.projects.filter((project) => project.id !== projectId),
+        goals: {
+          daily: prev.goals.daily.map((goal) => ({
+            ...goal,
+            projectIds: goal.projectIds.filter((id) => id !== projectId),
+          })),
+          weekly: prev.goals.weekly.map((goal) => ({
+            ...goal,
+            projectIds: goal.projectIds.filter((id) => id !== projectId),
+          })),
+          monthly: prev.goals.monthly.map((goal) => ({
+            ...goal,
+            projectIds: goal.projectIds.filter((id) => id !== projectId),
+          })),
+        },
+        todayProjectId: prev.todayProjectId === projectId ? "" : prev.todayProjectId,
+      };
+    });
+
+    setFilters((prev) => {
+      filtersSnapshot = prev;
+      return {
+        ...prev,
+        projectIds: prev.projectIds.filter((id) => id !== projectId),
+      };
+    });
+
+    if (dataSnapshot) {
+      const restoreData = dataSnapshot;
+      const restoreFilters = filtersSnapshot;
+      registerUndoAction("project", () => {
+        setData(restoreData);
+        dataRef.current = restoreData;
+        if (restoreFilters) {
+          setFilters(restoreFilters);
+        }
+      });
+    }
   };
 
   const persistData = useCallback(
@@ -1091,6 +1428,7 @@ export default function Home() {
   }, [isLoaded, persistData, settings.autosaveEnabled, settings.autosaveSeconds]);
 
   const goalDraftKey = (kind: GoalType, goalId: string) => `${kind}:${goalId}`;
+  const subGoalDraftKey = (kind: GoalType, goalId: string, subGoalId: string) => `${kind}:${goalId}:sub:${subGoalId}`;
 
   const setGoalAttachmentDraft = (kind: GoalType, goalId: string, updater: (draft: AttachmentDraft) => AttachmentDraft) => {
     const key = goalDraftKey(kind, goalId);
@@ -1135,10 +1473,126 @@ export default function Home() {
   };
 
   const removeGoalAttachment = (kind: GoalType, goalId: string, attachmentId: string) => {
-    updateGoal(kind, goalId, (goal) => ({
-      ...goal,
-      attachments: goal.attachments.filter((attachment) => attachment.id !== attachmentId),
+    let snapshot: LifeData | null = null;
+
+    setData((prev) => {
+      const currentGoal = prev.goals[kind].find((goal) => goal.id === goalId);
+      if (!currentGoal || !currentGoal.attachments.some((attachment) => attachment.id === attachmentId)) {
+        return prev;
+      }
+
+      snapshot = cloneLifeData(prev);
+      return {
+        ...prev,
+        goals: {
+          ...prev.goals,
+          [kind]: prev.goals[kind].map((goal) =>
+            goal.id === goalId
+              ? { ...goal, attachments: goal.attachments.filter((attachment) => attachment.id !== attachmentId) }
+              : goal
+          ),
+        },
+      };
+    });
+
+    if (snapshot) {
+      const restore = snapshot;
+      registerUndoAction("goal attachment", () => {
+        setData(restore);
+        dataRef.current = restore;
+      });
+    }
+  };
+
+  const setSubGoalAttachmentDraft = (
+    kind: GoalType,
+    goalId: string,
+    subGoalId: string,
+    updater: (draft: AttachmentDraft) => AttachmentDraft
+  ) => {
+    const key = subGoalDraftKey(kind, goalId, subGoalId);
+    setSubGoalAttachmentDrafts((prev) => ({
+      ...prev,
+      [key]: updater(prev[key] ?? { ...EMPTY_ATTACHMENT_DRAFT }),
     }));
+  };
+
+  const addSubGoalAttachmentLink = (kind: GoalType, goalId: string, subGoalId: string) => {
+    const key = subGoalDraftKey(kind, goalId, subGoalId);
+    const draft = subGoalAttachmentDrafts[key] ?? EMPTY_ATTACHMENT_DRAFT;
+    const safeUrl = sanitizeAttachmentUrl(draft.url);
+
+    if (!safeUrl) {
+      setToastMessage("enter a valid link (https/file) or a plain domain like example.com");
+      return;
+    }
+
+    const label = draft.label.trim() || safeUrl.replace(/^https?:\/\//, "").slice(0, 40);
+    updateGoalSubGoals(kind, goalId, (subGoals) =>
+      updateSubGoalById(subGoals, subGoalId, (subGoal) => ({
+        ...subGoal,
+        attachments: [
+          ...subGoal.attachments,
+          {
+            id: createId("subgoal-attachment"),
+            label,
+            url: safeUrl,
+            source: safeUrl.startsWith("data:")
+              ? "embedded-file"
+              : safeUrl.startsWith("local-file://")
+                ? "local-file-ref"
+                : "url",
+          },
+        ],
+      }))
+    );
+
+    setSubGoalAttachmentDrafts((prev) => ({
+      ...prev,
+      [key]: { ...EMPTY_ATTACHMENT_DRAFT },
+    }));
+  };
+
+  const removeSubGoalAttachment = (kind: GoalType, goalId: string, subGoalId: string, attachmentId: string) => {
+    let snapshot: LifeData | null = null;
+
+    setData((prev) => {
+      const currentGoal = prev.goals[kind].find((goal) => goal.id === goalId);
+      if (!currentGoal) {
+        return prev;
+      }
+
+      const nextSubGoals = updateSubGoalById(currentGoal.subGoals, subGoalId, (subGoal) => {
+        if (!subGoal.attachments.some((attachment) => attachment.id === attachmentId)) {
+          return subGoal;
+        }
+        return {
+          ...subGoal,
+          attachments: subGoal.attachments.filter((attachment) => attachment.id !== attachmentId),
+        };
+      });
+
+      if (nextSubGoals === currentGoal.subGoals) {
+        return prev;
+      }
+
+      snapshot = cloneLifeData(prev);
+      return {
+        ...prev,
+        goals: {
+          ...prev.goals,
+          [kind]: prev.goals[kind].map((goal) => (goal.id === goalId ? { ...goal, subGoals: nextSubGoals } : goal)),
+        },
+      };
+    });
+
+    if (snapshot) {
+      const restore = snapshot;
+      registerUndoAction("sub-goal attachment", () => {
+        setData(restore);
+        dataRef.current = restore;
+      });
+    }
   };
 
   const addProjectAttachmentLink = (projectId: string) => {
@@ -1175,10 +1629,31 @@ export default function Home() {
   };
 
   const removeProjectAttachment = (projectId: string, attachmentId: string) => {
-    updateProject(projectId, (project) => ({
-      ...project,
-      attachments: project.attachments.filter((attachment) => attachment.id !== attachmentId),
-    }));
+    let snapshot: LifeData | null = null;
+    setData((prev) => {
+      const currentProject = prev.projects.find((project) => project.id === projectId);
+      if (!currentProject || !currentProject.attachments.some((attachment) => attachment.id === attachmentId)) {
+        return prev;
+      }
+
+      snapshot = cloneLifeData(prev);
+      return {
+        ...prev,
+        projects: prev.projects.map((project) =>
+          project.id === projectId
+            ? { ...project, attachments: project.attachments.filter((attachment) => attachment.id !== attachmentId) }
+            : project
+        ),
+      };
+    });
+
+    if (snapshot) {
+      const restore = snapshot;
+      registerUndoAction("project attachment", () => {
+        setData(restore);
+        dataRef.current = restore;
+      });
+    }
   };
 
   const addProjectDraftAttachmentLink = () => {
@@ -1211,10 +1686,29 @@ export default function Home() {
   };
 
   const removeProjectDraftAttachment = (attachmentId: string) => {
-    setProjectDraft((prev) => ({
-      ...prev,
-      attachments: prev.attachments.filter((attachment) => attachment.id !== attachmentId),
-    }));
+    let snapshot: ProjectDraft | null = null;
+    setProjectDraft((prev) => {
+      if (!prev.attachments.some((attachment) => attachment.id === attachmentId)) {
+        return prev;
+      }
+
+      snapshot = {
+        ...prev,
+        attachments: [...prev.attachments],
+      };
+
+      return {
+        ...prev,
+        attachments: prev.attachments.filter((attachment) => attachment.id !== attachmentId),
+      };
+    });
+
+    if (snapshot) {
+      const restore = snapshot;
+      registerUndoAction("draft attachment", () => {
+        setProjectDraft(restore);
+      });
+    }
   };
 
   const openFileUpload = (target: UploadTarget) => {
@@ -1320,9 +1814,23 @@ export default function Home() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 10 }}
-          className="fixed bottom-5 right-5 z-50 rounded-xl border border-teal-500/40 bg-zinc-900 px-4 py-2 text-sm text-teal-200 shadow-lg"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-xl border border-teal-500/40 bg-zinc-900 px-4 py-2 text-sm text-teal-200 shadow-lg"
         >
-          {toastMessage}
+          <span>{toastMessage}</span>
+          {undoAction && (
+            <Button
+              size="sm"
+              variant="flat"
+              className="bg-teal-500/20 text-teal-200"
+              onPress={() => {
+                undoAction.undo();
+                setUndoAction(null);
+                setToastMessage("undo applied");
+              }}
+            >
+              undo
+            </Button>
+          )}
         </motion.div>
       )}
 
@@ -1707,6 +2215,11 @@ export default function Home() {
                           const draft = goalAttachmentDrafts[draftKey] ?? EMPTY_ATTACHMENT_DRAFT;
                           const goalRef = `${kind}:${goal.id}`;
                           const isGoalEditing = goalsEditMode || activeGoalEditorRef === goalRef;
+                          const subGoalProgress = countSubGoalsProgress(goal.subGoals);
+                          const hasSubGoals = subGoalProgress.total > 0;
+                          const subGoalCompletionPercent = hasSubGoals
+                            ? Math.round((subGoalProgress.completed / subGoalProgress.total) * 100)
+                            : 0;
                           const handleGoalCardClick = (event: MouseEvent<HTMLElement>) => {
                             if (goalsEditMode || isGoalEditing) {
                               return;
@@ -1717,6 +2230,305 @@ export default function Home() {
                             }
                             setActiveGoalEditorRef(goalRef);
                           };
+
+                          const renderReadOnlySubGoals = (subGoals: SubGoalEntry[], depth = 0) => (
+                            <div className={depth > 0 ? "ml-4 mt-2 space-y-2" : "space-y-2"}>
+                              {subGoals.map((subGoal) => (
+                                <div key={subGoal.id} className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      isIconOnly
+                                      size="sm"
+                                      variant="light"
+                                      className={
+                                        subGoal.completed
+                                          ? "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
+                                          : "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
+                                      }
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        toggleSubGoalCompleted(kind, goal.id, subGoal.id);
+                                      }}
+                                    >
+                                      {subGoal.completed ? "✓" : "◯"}
+                                    </Button>
+                                    <p className={`text-xs ${subGoal.completed ? "text-zinc-500 line-through" : "text-zinc-300"}`}>
+                                      {subGoal.title.trim() || "untitled sub-goal"}
+                                    </p>
+                                  </div>
+                                  {subGoal.description.trim().length > 0 && (
+                                    <p className="text-xs leading-relaxed text-zinc-400">{subGoal.description}</p>
+                                  )}
+                                  <div className="flex flex-wrap gap-2">
+                                    {subGoal.dueDate.length > 0 && (
+                                      <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
+                                        due {subGoal.dueDate}
+                                      </Chip>
+                                    )}
+                                    {subGoal.priority && (
+                                      <Chip variant="flat" className="bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                        {PRIORITY_LABELS[subGoal.priority]}
+                                      </Chip>
+                                    )}
+                                    {subGoal.timeline && (
+                                      <Chip variant="flat" className="bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                                        {TIMELINE_LABELS[subGoal.timeline]}
+                                      </Chip>
+                                    )}
+                                  </div>
+                                  {subGoal.attachments.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                      {subGoal.attachments.map((attachment) => (
+                                        <button
+                                          key={attachment.id}
+                                          type="button"
+                                          className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 underline decoration-zinc-600"
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            openAttachment(attachment);
+                                          }}
+                                        >
+                                          {attachment.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {subGoal.children.length > 0 && renderReadOnlySubGoals(subGoal.children, depth + 1)}
+                                </div>
+                              ))}
+                            </div>
+                          );
+
+                          const renderEditableSubGoals = (subGoals: SubGoalEntry[], depth = 0) => (
+                            <div className={depth > 0 ? "ml-4 mt-2 space-y-2" : "space-y-2"}>
+                              {subGoals.map((subGoal) => {
+                                const subGoalDraft = subGoalAttachmentDrafts[subGoalDraftKey(kind, goal.id, subGoal.id)] ?? EMPTY_ATTACHMENT_DRAFT;
+                                return (
+                                  <div key={subGoal.id} className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        isIconOnly
+                                        size="sm"
+                                        variant="light"
+                                        className={
+                                          subGoal.completed
+                                            ? "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
+                                            : "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
+                                        }
+                                        onClick={(event) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          toggleSubGoalCompleted(kind, goal.id, subGoal.id);
+                                        }}
+                                      >
+                                        {subGoal.completed ? "✓" : "◯"}
+                                      </Button>
+                                      <Input
+                                        variant="bordered"
+                                        value={subGoal.title}
+                                        onValueChange={(value) => updateSubGoalTitle(kind, goal.id, subGoal.id, value)}
+                                        placeholder="sub-goal title"
+                                        classNames={{
+                                          inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                          input: "text-zinc-100 placeholder:text-zinc-500",
+                                        }}
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="light"
+                                        className="text-zinc-400"
+                                        onPress={() => addChildSubGoal(kind, goal.id, subGoal.id)}
+                                      >
+                                        add child
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="light"
+                                        className="text-zinc-500"
+                                        onPress={() => removeSubGoal(kind, goal.id, subGoal.id)}
+                                      >
+                                        remove
+                                      </Button>
+                                    </div>
+                                    <Textarea
+                                      minRows={2}
+                                      variant="bordered"
+                                      value={subGoal.description}
+                                      onValueChange={(value) =>
+                                        updateGoalSubGoals(kind, goal.id, (items) =>
+                                          updateSubGoalById(items, subGoal.id, (item) => ({
+                                            ...item,
+                                            description: value,
+                                          }))
+                                        )
+                                      }
+                                      placeholder="sub-goal description"
+                                      classNames={{
+                                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                        input: "text-zinc-100 placeholder:text-zinc-500",
+                                      }}
+                                    />
+                                    <Input
+                                      type="date"
+                                      label="sub-goal due date"
+                                      labelPlacement="outside"
+                                      variant="bordered"
+                                      value={subGoal.dueDate}
+                                      onValueChange={(value) =>
+                                        updateGoalSubGoals(kind, goal.id, (items) =>
+                                          updateSubGoalById(items, subGoal.id, (item) => ({
+                                            ...item,
+                                            dueDate: value,
+                                          }))
+                                        )
+                                      }
+                                      classNames={{
+                                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                        input: "text-zinc-100",
+                                        label: "text-zinc-400",
+                                      }}
+                                    />
+                                    <div className="space-y-2">
+                                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
+                                          const selected = subGoal.priority === priority;
+                                          return (
+                                            <Button
+                                              key={`${subGoal.id}-priority-${priority}`}
+                                              size="sm"
+                                              variant={selected ? "flat" : "bordered"}
+                                              className={
+                                                selected
+                                                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                                  : "border-zinc-700 text-zinc-300"
+                                              }
+                                              onPress={() =>
+                                                updateGoalSubGoals(kind, goal.id, (items) =>
+                                                  updateSubGoalById(items, subGoal.id, (item) => ({
+                                                    ...item,
+                                                    priority: item.priority === priority ? "" : priority,
+                                                  }))
+                                                )
+                                              }
+                                            >
+                                              {PRIORITY_LABELS[priority]}
+                                            </Button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">timeline</p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
+                                          const selected = subGoal.timeline === timeline;
+                                          return (
+                                            <Button
+                                              key={`${subGoal.id}-timeline-${timeline}`}
+                                              size="sm"
+                                              variant={selected ? "flat" : "bordered"}
+                                              className={
+                                                selected
+                                                  ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                                  : "border-zinc-700 text-zinc-300"
+                                              }
+                                              onPress={() =>
+                                                updateGoalSubGoals(kind, goal.id, (items) =>
+                                                  updateSubGoalById(items, subGoal.id, (item) => ({
+                                                    ...item,
+                                                    timeline: item.timeline === timeline ? "" : timeline,
+                                                  }))
+                                                )
+                                              }
+                                            >
+                                              {TIMELINE_LABELS[timeline]}
+                                            </Button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">attachments</p>
+                                      <div className="grid gap-2 sm:grid-cols-2">
+                                        <Input
+                                          variant="bordered"
+                                          value={subGoalDraft.label}
+                                          onKeyDown={preventEnterSubmit}
+                                          onValueChange={(value) =>
+                                            setSubGoalAttachmentDraft(kind, goal.id, subGoal.id, (prev) => ({ ...prev, label: value }))
+                                          }
+                                          placeholder="attachment label"
+                                          classNames={{
+                                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                            input: "text-zinc-100 placeholder:text-zinc-500",
+                                          }}
+                                        />
+                                        <Input
+                                          variant="bordered"
+                                          value={subGoalDraft.url}
+                                          onKeyDown={preventEnterSubmit}
+                                          onValueChange={(value) =>
+                                            setSubGoalAttachmentDraft(kind, goal.id, subGoal.id, (prev) => ({ ...prev, url: value }))
+                                          }
+                                          placeholder="https://... or /Users/.../file.pdf"
+                                          classNames={{
+                                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                            input: "text-zinc-100 placeholder:text-zinc-500",
+                                          }}
+                                        />
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="flat"
+                                          className="bg-zinc-800 text-zinc-200"
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            addSubGoalAttachmentLink(kind, goal.id, subGoal.id);
+                                          }}
+                                        >
+                                          add link
+                                        </Button>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {subGoal.attachments.map((attachment) => (
+                                          <div
+                                            key={attachment.id}
+                                            className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
+                                          >
+                                            <button
+                                              type="button"
+                                              className="text-xs text-zinc-200 underline decoration-zinc-600"
+                                              onClick={() => openAttachment(attachment)}
+                                            >
+                                              {attachment.label}
+                                            </button>
+                                            <Button
+                                              size="sm"
+                                              variant="light"
+                                              className="min-w-0 px-1 text-zinc-500"
+                                              onPress={() => removeSubGoalAttachment(kind, goal.id, subGoal.id, attachment.id)}
+                                            >
+                                              x
+                                            </Button>
+                                          </div>
+                                        ))}
+                                        {subGoal.attachments.length === 0 && (
+                                          <span className="text-xs text-zinc-500">no attachments yet</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {subGoal.children.length > 0 && renderEditableSubGoals(subGoal.children, depth + 1)}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
 
                           return (
                             <Card key={goal.id} className={`border border-zinc-800 bg-zinc-950/70 shadow-none ${!isGoalEditing ? "cursor-pointer" : ""}`}>
@@ -1750,6 +2562,20 @@ export default function Home() {
                                   </p>
                                 </div>
                                 <div className="flex items-center gap-2">
+                                  <Button
+                                    isIconOnly
+                                    size="sm"
+                                    variant="flat"
+                                    className="bg-zinc-800 text-zinc-200"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      addRootSubGoal(kind, goal.id);
+                                      setActiveGoalEditorRef(goalRef);
+                                    }}
+                                  >
+                                    +
+                                  </Button>
                                   {!goalsEditMode && isGoalEditing && (
                                     <Button
                                       size="sm"
@@ -1778,6 +2604,20 @@ export default function Home() {
                                   <>
                                     {goal.description.trim().length > 0 && (
                                       <p className="text-sm leading-relaxed text-zinc-300">{goal.description}</p>
+                                    )}
+                                    {hasSubGoals && (
+                                      <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+                                        <Progress
+                                          aria-label={`sub-goal progress for ${goal.title || "goal"}`}
+                                          value={subGoalCompletionPercent}
+                                          size="sm"
+                                          color="primary"
+                                        />
+                                        <p className="text-xs text-zinc-400">
+                                          {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
+                                        </p>
+                                        {renderReadOnlySubGoals(goal.subGoals)}
+                                      </div>
                                     )}
                                     <div className="flex flex-wrap gap-2">
                                       {goal.dueDate.length > 0 && (
@@ -1865,6 +2705,35 @@ export default function Home() {
                                     input: "text-zinc-100 placeholder:text-zinc-500",
                                   }}
                                 />
+                                <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">sub-goals</p>
+                                    <Button
+                                      size="sm"
+                                      variant="flat"
+                                      className="bg-zinc-800 text-zinc-200"
+                                      onPress={() => addRootSubGoal(kind, goal.id)}
+                                    >
+                                      add sub-goal
+                                    </Button>
+                                  </div>
+                                  {hasSubGoals ? (
+                                    <>
+                                      <Progress
+                                        aria-label={`sub-goal progress for ${goal.title || "goal"}`}
+                                        value={subGoalCompletionPercent}
+                                        size="sm"
+                                        color="primary"
+                                      />
+                                      <p className="text-xs text-zinc-400">
+                                        {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
+                                      </p>
+                                      {renderEditableSubGoals(goal.subGoals)}
+                                    </>
+                                  ) : (
+                                    <p className="text-sm text-zinc-500">no sub-goals yet.</p>
+                                  )}
+                                </div>
 
                                 <Input
                                   type="date"
@@ -2464,7 +3333,7 @@ export default function Home() {
                                   color="primary"
                                 />
                                 <p className="mt-1 text-xs text-zinc-400">
-                                  {projectProgress.completedGoals}/{projectProgress.goalsCount} linked goals done
+                                  {projectProgress.goalsCount} linked goals
                                 </p>
                               </div>
                               <div className="flex flex-wrap gap-2">

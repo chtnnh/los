@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Textarea } from "@heroui/react";
-import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   AREA_LABELS,
@@ -28,7 +27,6 @@ function getGoalRef(goal: GoalWithType): string {
 }
 
 export default function GoalsPage() {
-  const searchParams = useSearchParams();
   const [data, setData] = useState(defaultLifeData);
   const [selectedGoalRef, setSelectedGoalRef] = useState("");
   const [editMode, setEditMode] = useState(false);
@@ -38,7 +36,7 @@ export default function GoalsPage() {
       const loaded = loadLifeDataFromStorage();
       setData(loaded);
 
-      const requestedGoalRef = searchParams.get("goalRef")?.trim() ?? "";
+      const requestedGoalRef = new URLSearchParams(window.location.search).get("goalRef")?.trim() ?? "";
       const availableGoalRefs = (["daily", "weekly", "monthly"] as const).flatMap((goalType) =>
         loaded.goals[goalType].map((goal) => `${goalType}:${goal.id}`),
       );
@@ -55,7 +53,7 @@ export default function GoalsPage() {
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [searchParams]);
+  }, []);
 
   const allGoals = useMemo<GoalWithType[]>(
     () =>
