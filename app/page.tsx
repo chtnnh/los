@@ -1,6 +1,6 @@
 "use client";
 
-import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Textarea } from "@heroui/react";
+import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Progress, Select, SelectItem, Switch, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent, type MouseEvent } from "react";
@@ -60,6 +60,16 @@ type GoalFilters = {
 type AttachmentDraft = {
   label: string;
   url: string;
+};
+
+type ProgressStats = {
+  completedGoals: number;
+  goalsCount: number;
+  completionPercent: number;
+};
+
+type AreaProgressStats = ProgressStats & {
+  projectsCount: number;
 };
 
 type ProjectDraft = {
@@ -856,6 +866,45 @@ export default function Home() {
     return items;
   }, [data.goals, filters, goalSort]);
 
+  const allGoals = useMemo(
+    () => (Object.keys(GOAL_LABELS) as GoalType[]).flatMap((kind) => data.goals[kind]),
+    [data.goals]
+  );
+
+  const areaProgressByArea = useMemo(
+    () =>
+      (Object.keys(AREA_LABELS) as LifeArea[]).reduce<Record<LifeArea, AreaProgressStats>>((acc, area) => {
+        const linkedGoals = allGoals.filter((goal) => goal.areaTags.includes(area));
+        const goalsCount = linkedGoals.length;
+        const completedGoals = linkedGoals.filter((goal) => goal.completed).length;
+        const projectsCount = data.projects.filter((project) => project.areaTags.includes(area)).length;
+        acc[area] = {
+          completedGoals,
+          goalsCount,
+          projectsCount,
+          completionPercent: goalsCount === 0 ? 0 : Math.round((completedGoals / goalsCount) * 100),
+        };
+        return acc;
+      }, {} as Record<LifeArea, AreaProgressStats>),
+    [allGoals, data.projects]
+  );
+
+  const projectProgressById = useMemo(
+    () =>
+      data.projects.reduce<Record<string, ProgressStats>>((acc, project) => {
+        const linkedGoals = allGoals.filter((goal) => goal.projectIds.includes(project.id));
+        const goalsCount = linkedGoals.length;
+        const completedGoals = linkedGoals.filter((goal) => goal.completed).length;
+        acc[project.id] = {
+          completedGoals,
+          goalsCount,
+          completionPercent: goalsCount === 0 ? 0 : Math.round((completedGoals / goalsCount) * 100),
+        };
+        return acc;
+      }, {}),
+    [allGoals, data.projects]
+  );
+
   const goalReferenceOptions = useMemo(
     () =>
       (Object.keys(GOAL_LABELS) as GoalType[]).flatMap((kind) =>
@@ -1419,6 +1468,7 @@ export default function Home() {
                 <CardBody className="pt-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
+                    const areaProgress = areaProgressByArea[area];
                     const isVisionEditing = visionEditMode || activeVisionArea === area;
                     const handleVisionCardClick = (event: MouseEvent<HTMLElement>) => {
                       if (visionEditMode || isVisionEditing) {
@@ -1448,9 +1498,26 @@ export default function Home() {
                         </CardHeader>
                         <CardBody onClick={handleVisionCardClick}>
                           {!isVisionEditing && (
-                            <p className="min-h-16 text-sm leading-relaxed text-zinc-300">
-                              {data.visions[area].trim() || `vision for ${AREA_LABELS[area].toLowerCase()} not set yet`}
-                            </p>
+                            <>
+                              <p className="min-h-16 text-sm leading-relaxed text-zinc-300">
+                                {data.visions[area].trim() || `vision for ${AREA_LABELS[area].toLowerCase()} not set yet`}
+                              </p>
+                              <Progress
+                                aria-label={`${AREA_LABELS[area]} progress`}
+                                className="mt-3"
+                                value={areaProgress.completionPercent}
+                                size="sm"
+                                color="primary"
+                              />
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <Chip size="sm" variant="flat" className="bg-zinc-800 text-zinc-300">
+                                  {areaProgress.completedGoals}/{areaProgress.goalsCount} goals done
+                                </Chip>
+                                <Chip size="sm" variant="flat" className="bg-zinc-800 text-zinc-300">
+                                  {areaProgress.projectsCount} projects
+                                </Chip>
+                              </div>
+                            </>
                           )}
                           {isVisionEditing && (
                             <Textarea
@@ -2312,6 +2379,11 @@ export default function Home() {
                   {sortedProjects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
                   {sortedProjects.map((project) => {
                     const draft = projectAttachmentDrafts[project.id] ?? EMPTY_ATTACHMENT_DRAFT;
+                    const projectProgress = projectProgressById[project.id] ?? {
+                      completedGoals: 0,
+                      goalsCount: 0,
+                      completionPercent: 0,
+                    };
                     const isProjectEditing = projectsEditMode || activeProjectEditorId === project.id;
                     const handleProjectCardClick = (event: MouseEvent<HTMLElement>) => {
                       if (projectsEditMode || isProjectEditing) {
@@ -2357,6 +2429,17 @@ export default function Home() {
                         <CardBody className="space-y-3 pt-0" onClick={handleProjectCardClick}>
                           {!isProjectEditing && (
                             <>
+                              <div>
+                                <Progress
+                                  aria-label={`progress ${project.title || "project"}`}
+                                  value={projectProgress.completionPercent}
+                                  size="sm"
+                                  color="primary"
+                                />
+                                <p className="mt-1 text-xs text-zinc-400">
+                                  {projectProgress.completedGoals}/{projectProgress.goalsCount} linked goals done
+                                </p>
+                              </div>
                               <div className="flex flex-wrap gap-2">
                                 {project.dueDate.length > 0 && (
                                   <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
