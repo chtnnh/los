@@ -17,6 +17,7 @@ type LifeArea = "health" | "work" | "relationships" | "financial" | "learning" |
 type GoalType = "daily" | "weekly" | "monthly";
 type PriorityTag = "low" | "medium" | "high";
 type TimelineTag = "day" | "week" | "month" | "quarter" | "year" | "decade";
+type GoalSortOption = "timeline" | "title-asc" | "due-soon" | "priority-high";
 type ProjectSortOption = "manual" | "title-asc" | "due-soon";
 type AttachmentSource = "url" | "local-file-ref" | "embedded-file";
 
@@ -146,6 +147,19 @@ const GOAL_LABELS: Record<GoalType, string> = {
   daily: "Daily",
   weekly: "Weekly",
   monthly: "Monthly",
+};
+
+const GOAL_SORT_LABELS: Record<GoalSortOption, string> = {
+  timeline: "Timeline (blank first)",
+  "title-asc": "Title (A-Z)",
+  "due-soon": "Due date (soonest)",
+  "priority-high": "Priority (high to low)",
+};
+
+const PRIORITY_SORT_ORDER: Record<PriorityTag, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
 };
 
 const PROJECT_SORT_LABELS: Record<ProjectSortOption, string> = {
@@ -678,6 +692,7 @@ export default function Home() {
   const [todayEditMode, setTodayEditMode] = useState(false);
   const [projectsEditMode, setProjectsEditMode] = useState(false);
   const [activeProjectEditorId, setActiveProjectEditorId] = useState<string | null>(null);
+  const [goalSort, setGoalSort] = useState<GoalSortOption>("timeline");
   const [projectSort, setProjectSort] = useState<ProjectSortOption>("manual");
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
@@ -799,6 +814,31 @@ export default function Home() {
       .filter(({ goal }) => matchesFilter(goal));
 
     items.sort((a, b) => {
+      if (goalSort === "title-asc") {
+        return a.goal.title.localeCompare(b.goal.title);
+      }
+
+      if (goalSort === "priority-high") {
+        const aRank = a.goal.priority ? PRIORITY_SORT_ORDER[a.goal.priority] : 3;
+        const bRank = b.goal.priority ? PRIORITY_SORT_ORDER[b.goal.priority] : 3;
+        if (aRank !== bRank) {
+          return aRank - bRank;
+        }
+        const dueCompare = compareDueDate(a.goal.dueDate, b.goal.dueDate);
+        if (dueCompare !== 0) {
+          return dueCompare;
+        }
+        return a.goal.title.localeCompare(b.goal.title);
+      }
+
+      if (goalSort === "due-soon") {
+        const dueCompare = compareDueDate(a.goal.dueDate, b.goal.dueDate);
+        if (dueCompare !== 0) {
+          return dueCompare;
+        }
+        return a.goal.title.localeCompare(b.goal.title);
+      }
+
       const aRank = a.goal.timeline ? TIMELINE_SORT_ORDER[a.goal.timeline] : -1;
       const bRank = b.goal.timeline ? TIMELINE_SORT_ORDER[b.goal.timeline] : -1;
       if (aRank !== bRank) {
@@ -814,7 +854,7 @@ export default function Home() {
     });
 
     return items;
-  }, [data.goals, filters]);
+  }, [data.goals, filters, goalSort]);
 
   const goalReferenceOptions = useMemo(
     () =>
@@ -1528,9 +1568,34 @@ export default function Home() {
                       })}
                     </div>
                   )}
-                  <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">
-                    sorted by timeline (blank first)
-                  </p>
+                  <div className="w-full sm:max-w-xs">
+                    <Select
+                      label="sort goals"
+                      labelPlacement="outside"
+                      variant="bordered"
+                      selectedKeys={[goalSort]}
+                      onSelectionChange={(keys) => {
+                        const selected = Array.from(keys as Set<string>)[0] as GoalSortOption | undefined;
+                        if (selected) {
+                          setGoalSort(selected);
+                        }
+                      }}
+                      classNames={{
+                        trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        value: "!text-zinc-100",
+                        label: "text-zinc-400",
+                        selectorIcon: "text-zinc-400",
+                        listboxWrapper: "bg-zinc-900 text-zinc-100",
+                        popoverContent: "bg-zinc-900 border border-zinc-700",
+                      }}
+                    >
+                      {(Object.keys(GOAL_SORT_LABELS) as GoalSortOption[]).map((option) => (
+                        <SelectItem key={option} className="text-zinc-100">
+                          {GOAL_SORT_LABELS[option]}
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  </div>
                 </div>
 
                 <div className="mb-3 mt-1 flex items-center justify-between gap-3">
