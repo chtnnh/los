@@ -670,8 +670,11 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string>("");
   const [isLoaded, setIsLoaded] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
+  const [visionEditMode, setVisionEditMode] = useState(false);
+  const [activeVisionArea, setActiveVisionArea] = useState<LifeArea | null>(null);
   const [goalsEditMode, setGoalsEditMode] = useState(false);
   const [activeGoalEditorRef, setActiveGoalEditorRef] = useState<string | null>(null);
+  const [todayEditMode, setTodayEditMode] = useState(false);
   const [projectsEditMode, setProjectsEditMode] = useState(false);
   const [activeProjectEditorId, setActiveProjectEditorId] = useState<string | null>(null);
   const [projectSort, setProjectSort] = useState<ProjectSortOption>("manual");
@@ -1340,46 +1343,85 @@ export default function Home() {
                     <h2 className="text-xl font-medium">vision dashboard</h2>
                     <p className="mt-1 text-sm text-zinc-400">all key areas in one view</p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    className="text-zinc-400"
-                    onPress={() => toggleSection("vision")}
-                  >
-                    {collapsedSections.vision ? "expand" : "collapse"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className={visionEditMode ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" : "bg-zinc-800 text-zinc-300"}
+                      onPress={() => setVisionEditMode((prev) => !prev)}
+                    >
+                      {visionEditMode ? "edit mode" : "view mode"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      className="text-zinc-400"
+                      onPress={() => toggleSection("vision")}
+                    >
+                      {collapsedSections.vision ? "expand" : "collapse"}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               {!collapsedSections.vision && (
                 <CardBody className="pt-4">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => (
-                    <Card key={area} className="border border-zinc-800 bg-zinc-950/60 shadow-none">
-                      <CardHeader className="pb-2">
-                        <Chip variant="flat" className={AREA_TAG_CLASSES[area]}>
-                          {AREA_LABELS[area]}
-                        </Chip>
-                      </CardHeader>
-                      <CardBody>
-                        <Textarea
-                          minRows={3}
-                          variant="bordered"
-                          value={data.visions[area]}
-                          onValueChange={(value) =>
-                            setData((prev) => ({
-                              ...prev,
-                              visions: { ...prev.visions, [area]: value },
-                            }))
-                          }
-                          classNames={{
-                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                            input: "text-zinc-100 placeholder:text-zinc-500",
-                          }}
-                          placeholder={`vision for ${AREA_LABELS[area].toLowerCase()}`}
-                        />
-                      </CardBody>
-                    </Card>
-                  ))}
+                  {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
+                    const isVisionEditing = visionEditMode || activeVisionArea === area;
+                    const handleVisionCardClick = (event: MouseEvent<HTMLElement>) => {
+                      if (visionEditMode || isVisionEditing) {
+                        return;
+                      }
+                      const target = event.target as HTMLElement;
+                      if (target.closest("button, input, textarea")) {
+                        return;
+                      }
+                      setActiveVisionArea(area);
+                    };
+
+                    return (
+                      <Card
+                        key={area}
+                        className={`border border-zinc-800 bg-zinc-950/60 shadow-none ${!isVisionEditing ? "cursor-pointer" : ""}`}
+                      >
+                        <CardHeader className="flex items-center justify-between pb-2" onClick={handleVisionCardClick}>
+                          <Chip variant="flat" className={AREA_TAG_CLASSES[area]}>
+                            {AREA_LABELS[area]}
+                          </Chip>
+                          {!visionEditMode && isVisionEditing && (
+                            <Button size="sm" variant="light" className="text-zinc-500" onPress={() => setActiveVisionArea(null)}>
+                              done
+                            </Button>
+                          )}
+                        </CardHeader>
+                        <CardBody onClick={handleVisionCardClick}>
+                          {!isVisionEditing && (
+                            <p className="min-h-16 text-sm leading-relaxed text-zinc-300">
+                              {data.visions[area].trim() || `vision for ${AREA_LABELS[area].toLowerCase()} not set yet`}
+                            </p>
+                          )}
+                          {isVisionEditing && (
+                            <Textarea
+                              minRows={3}
+                              variant="bordered"
+                              value={data.visions[area]}
+                              onValueChange={(value) =>
+                                setData((prev) => ({
+                                  ...prev,
+                                  visions: { ...prev.visions, [area]: value },
+                                }))
+                              }
+                              classNames={{
+                                inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                                input: "text-zinc-100 placeholder:text-zinc-500",
+                              }}
+                              placeholder={`vision for ${AREA_LABELS[area].toLowerCase()}`}
+                            />
+                          )}
+                        </CardBody>
+                      </Card>
+                    );
+                  })}
                 </div>
                 </CardBody>
               )}
@@ -1922,10 +1964,10 @@ export default function Home() {
               </CardHeader>
               {!collapsedSections.projects && (
                 <CardBody className="space-y-4 pt-4">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <Button
                     variant="flat"
-                    className="bg-cyan-500/20 text-cyan-300"
+                    className="bg-cyan-500/20 text-cyan-300 sm:shrink-0"
                     onPress={() => {
                       if (!projectsEditMode) {
                         setProjectsEditMode(true);
@@ -1937,6 +1979,34 @@ export default function Home() {
                   >
                     {showProjectForm ? "close new project" : "new project"}
                   </Button>
+                  <div className="w-full sm:ml-auto sm:max-w-xs">
+                    <Select
+                      label="sort projects"
+                      labelPlacement="outside"
+                      variant="bordered"
+                      selectedKeys={[projectSort]}
+                      onSelectionChange={(keys) => {
+                        const selected = Array.from(keys as Set<string>)[0] as ProjectSortOption | undefined;
+                        if (selected) {
+                          setProjectSort(selected);
+                        }
+                      }}
+                      classNames={{
+                        trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                        value: "!text-zinc-100",
+                        label: "text-zinc-400",
+                        selectorIcon: "text-zinc-400",
+                        listboxWrapper: "bg-zinc-900 text-zinc-100",
+                        popoverContent: "bg-zinc-900 border border-zinc-700",
+                      }}
+                    >
+                      {(Object.keys(PROJECT_SORT_LABELS) as ProjectSortOption[]).map((option) => (
+                        <SelectItem key={option} className="text-zinc-100">
+                          {PROJECT_SORT_LABELS[option]}
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  </div>
                   {showProjectForm && <span className="text-xs text-zinc-500">fill details and click add project</span>}
                 </div>
 
@@ -2160,35 +2230,6 @@ export default function Home() {
                     </Button>
                   </div>
                 )}
-
-                <div className="max-w-xs">
-                  <Select
-                    label="sort projects"
-                    labelPlacement="outside"
-                    variant="bordered"
-                    selectedKeys={[projectSort]}
-                    onSelectionChange={(keys) => {
-                      const selected = Array.from(keys as Set<string>)[0] as ProjectSortOption | undefined;
-                      if (selected) {
-                        setProjectSort(selected);
-                      }
-                    }}
-                    classNames={{
-                      trigger: "!bg-zinc-950 !text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
-                      value: "!text-zinc-100",
-                      label: "text-zinc-400",
-                      selectorIcon: "text-zinc-400",
-                      listboxWrapper: "bg-zinc-900 text-zinc-100",
-                      popoverContent: "bg-zinc-900 border border-zinc-700",
-                    }}
-                  >
-                    {(Object.keys(PROJECT_SORT_LABELS) as ProjectSortOption[]).map((option) => (
-                      <SelectItem key={option} className="text-zinc-100">
-                        {PROJECT_SORT_LABELS[option]}
-                      </SelectItem>
-                    ))}
-                  </Select>
-                </div>
 
                 <div className="space-y-3 border-t border-zinc-800 pt-4">
                   {sortedProjects.length === 0 && <p className="text-sm text-zinc-500">no projects yet.</p>}
@@ -2467,21 +2508,87 @@ export default function Home() {
               <CardHeader className="py-4">
                 <div className="flex w-full items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-medium">today alignment</h2>
+                    <h2 className="text-xl font-medium">daily alignment</h2>
                     <p className="mt-1 text-sm text-zinc-400">what actually matters right now</p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    className="text-zinc-400"
-                    onPress={() => toggleSection("today")}
-                  >
-                    {collapsedSections.today ? "expand" : "collapse"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className={todayEditMode ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" : "bg-zinc-800 text-zinc-300"}
+                      onPress={() => setTodayEditMode((prev) => !prev)}
+                    >
+                      {todayEditMode ? "edit mode" : "view mode"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      className="text-zinc-400"
+                      onPress={() => toggleSection("today")}
+                    >
+                      {collapsedSections.today ? "expand" : "collapse"}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               {!collapsedSections.today && (
-                <CardBody className="pt-4 space-y-4">
+                <CardBody
+                  className="pt-4 space-y-4"
+                  onClick={(event) => {
+                    if (todayEditMode) {
+                      return;
+                    }
+                    const target = event.target as HTMLElement;
+                    if (target.closest("button, input, textarea")) {
+                      return;
+                    }
+                    setTodayEditMode(true);
+                  }}
+                >
+                {!todayEditMode && (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {data.todayGoalRef && (
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          className="bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                          onPress={() => {
+                            setCollapsedSections((prev) => ({ ...prev, goals: false }));
+                            setGoalsEditMode(false);
+                            setActiveGoalEditorRef(data.todayGoalRef);
+                          }}
+                        >
+                          {goalReferenceOptions.find((option) => option.ref === data.todayGoalRef)?.label ?? "linked goal"}
+                        </Button>
+                      )}
+                      {data.todayProjectId && (
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          className="bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+                          onPress={() => {
+                            setCollapsedSections((prev) => ({ ...prev, projects: false }));
+                            setProjectsEditMode(false);
+                            setActiveProjectEditorId(data.todayProjectId);
+                          }}
+                        >
+                          {data.projects.find((project) => project.id === data.todayProjectId)?.title ?? "linked project"}
+                        </Button>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      <p className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 text-sm leading-relaxed text-zinc-300">
+                        {data.todayFocus.trim() || "what 1-3 things move your life forward today?"}
+                      </p>
+                      <p className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 text-sm leading-relaxed text-zinc-300">
+                        {data.energyPlan.trim() || "how are you protecting your energy today?"}
+                      </p>
+                    </div>
+                  </>
+                )}
+                {todayEditMode && (
+                  <>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Select
                     label="linked goal"
@@ -2564,6 +2671,8 @@ export default function Home() {
                   }}
                   placeholder="how are you protecting your energy today?"
                 />
+                  </>
+                )}
                 </CardBody>
               )}
             </Card>
