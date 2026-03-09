@@ -18,7 +18,7 @@ type GoalType = "daily" | "weekly" | "monthly";
 type PriorityTag = "low" | "medium" | "high";
 type TimelineTag = "day" | "week" | "month" | "quarter" | "year" | "decade";
 type GoalSortOption = "timeline" | "title-asc" | "due-soon" | "priority-high";
-type ProjectSortOption = "manual" | "title-asc" | "due-soon";
+type ProjectSortOption = "timeline" | "title-asc" | "due-soon" | "priority-high";
 type AttachmentSource = "url" | "local-file-ref" | "embedded-file";
 
 type AttachmentLink = {
@@ -173,9 +173,10 @@ const PRIORITY_SORT_ORDER: Record<PriorityTag, number> = {
 };
 
 const PROJECT_SORT_LABELS: Record<ProjectSortOption, string> = {
-  manual: "Manual",
+  timeline: "Timeline (blank first)",
   "title-asc": "Title (A-Z)",
   "due-soon": "Due date (soonest)",
+  "priority-high": "Priority (high to low)",
 };
 
 const EMPTY_ATTACHMENT_DRAFT: AttachmentDraft = { label: "", url: "" };
@@ -385,19 +386,43 @@ function compareDueDate(a: string, b: string): number {
 }
 
 function sortProjectEntries(items: ProjectEntry[], sortBy: ProjectSortOption): ProjectEntry[] {
-  if (sortBy === "manual") {
-    return items;
-  }
-
   const copy = [...items];
   copy.sort((a, b) => {
     if (sortBy === "title-asc") {
       return a.title.localeCompare(b.title);
     }
-    if (sortBy === "due-soon") {
-      return compareDueDate(a.dueDate, b.dueDate);
+
+    if (sortBy === "priority-high") {
+      const aRank = a.priority ? PRIORITY_SORT_ORDER[a.priority] : 3;
+      const bRank = b.priority ? PRIORITY_SORT_ORDER[b.priority] : 3;
+      if (aRank !== bRank) {
+        return aRank - bRank;
+      }
+      const dueCompare = compareDueDate(a.dueDate, b.dueDate);
+      if (dueCompare !== 0) {
+        return dueCompare;
+      }
+      return a.title.localeCompare(b.title);
     }
-    return 0;
+
+    if (sortBy === "due-soon") {
+      const dueCompare = compareDueDate(a.dueDate, b.dueDate);
+      if (dueCompare !== 0) {
+        return dueCompare;
+      }
+      return a.title.localeCompare(b.title);
+    }
+
+    const aRank = a.timeline ? TIMELINE_SORT_ORDER[a.timeline] : -1;
+    const bRank = b.timeline ? TIMELINE_SORT_ORDER[b.timeline] : -1;
+    if (aRank !== bRank) {
+      return aRank - bRank;
+    }
+    const dueCompare = compareDueDate(a.dueDate, b.dueDate);
+    if (dueCompare !== 0) {
+      return dueCompare;
+    }
+    return a.title.localeCompare(b.title);
   });
   return copy;
 }
@@ -703,7 +728,7 @@ export default function Home() {
   const [projectsEditMode, setProjectsEditMode] = useState(false);
   const [activeProjectEditorId, setActiveProjectEditorId] = useState<string | null>(null);
   const [goalSort, setGoalSort] = useState<GoalSortOption>("timeline");
-  const [projectSort, setProjectSort] = useState<ProjectSortOption>("manual");
+  const [projectSort, setProjectSort] = useState<ProjectSortOption>("timeline");
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Record<SectionKey, boolean>>({
@@ -2187,7 +2212,7 @@ export default function Home() {
                       classNames={{
                         inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
                         input: "text-zinc-100",
-                        label: "text-zinc-400",
+                        label: "!text-zinc-300",
                       }}
                     />
                     <div className="space-y-2">
@@ -2480,6 +2505,55 @@ export default function Home() {
                           )}
                           {isProjectEditing && (
                             <>
+                          <Input
+                            variant="bordered"
+                            value={project.title}
+                            onValueChange={(value) =>
+                              updateProject(project.id, (prev) => ({
+                                ...prev,
+                                title: value,
+                              }))
+                            }
+                            placeholder="project title"
+                            classNames={{
+                              inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                              input: "text-zinc-100 placeholder:text-zinc-500",
+                            }}
+                          />
+                          <Textarea
+                            minRows={2}
+                            variant="bordered"
+                            value={project.description}
+                            onValueChange={(value) =>
+                              updateProject(project.id, (prev) => ({
+                                ...prev,
+                                description: value,
+                              }))
+                            }
+                            placeholder="project description"
+                            classNames={{
+                              inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                              input: "text-zinc-100 placeholder:text-zinc-500",
+                            }}
+                          />
+                          <Input
+                            type="date"
+                            label="project due date"
+                            labelPlacement="outside"
+                            variant="bordered"
+                            value={project.dueDate}
+                            onValueChange={(value) =>
+                              updateProject(project.id, (prev) => ({
+                                ...prev,
+                                dueDate: value,
+                              }))
+                            }
+                            classNames={{
+                              inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
+                              input: "text-zinc-100",
+                              label: "!text-zinc-300",
+                            }}
+                          />
                           <div className="flex flex-wrap gap-2">
                             {project.dueDate.length > 0 && (
                               <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
@@ -2555,6 +2629,30 @@ export default function Home() {
                                     }
                                   >
                                     {TIMELINE_LABELS[timeline]}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">key areas</p>
+                            <div className="flex flex-wrap gap-2">
+                              {(Object.keys(AREA_LABELS) as LifeArea[]).map((area) => {
+                                const selected = project.areaTags.includes(area);
+                                return (
+                                  <Button
+                                    key={`${project.id}-area-${area}`}
+                                    size="sm"
+                                    variant={selected ? "flat" : "bordered"}
+                                    className={selected ? AREA_TAG_CLASSES[area] : "border-zinc-700 text-zinc-300"}
+                                    onPress={() =>
+                                      updateProject(project.id, (prev) => ({
+                                        ...prev,
+                                        areaTags: toggleInArray(prev.areaTags, area),
+                                      }))
+                                    }
+                                  >
+                                    {AREA_LABELS[area]}
                                   </Button>
                                 );
                               })}
