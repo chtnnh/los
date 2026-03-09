@@ -2,6 +2,7 @@
 
 import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Switch, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent, type MouseEvent } from "react";
 
 type SafeButtonProps = ComponentProps<typeof HeroButton> & {
@@ -1219,6 +1220,17 @@ export default function Home() {
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">carbon&apos;s system</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">life operating system</h1>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button as={Link} href="/goals" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                goals view
+              </Button>
+              <Button as={Link} href="/projects" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                projects view
+              </Button>
+              <Button as={Link} href="/key-areas" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                key areas view
+              </Button>
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Chip variant="flat" className="bg-zinc-800 text-zinc-200">
@@ -2547,6 +2559,14 @@ export default function Home() {
                 >
                 {!todayEditMode && (
                   <>
+                    <div className="flex flex-wrap gap-2">
+                      <Button as={Link} href="/goals" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                        open goals view
+                      </Button>
+                      <Button as={Link} href="/projects" size="sm" variant="flat" className="bg-zinc-800 text-zinc-200">
+                        open projects view
+                      </Button>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       {data.todayGoalRef && (
                         <Button
