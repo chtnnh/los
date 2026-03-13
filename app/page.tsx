@@ -4,6 +4,14 @@ import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Progress
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  createId,
+  createEmptySubGoal,
+  countSubGoalsProgress,
+  updateSubGoalById,
+  addChildSubGoalById,
+  removeSubGoalById,
+} from "@/lib/life-os-storage";
 
 type SafeButtonProps = ComponentProps<typeof HeroButton> & {
   type?: "button" | "submit" | "reset";
@@ -194,10 +202,6 @@ const PROJECT_SORT_LABELS: Record<ProjectSortOption, string> = {
 
 const EMPTY_ATTACHMENT_DRAFT: AttachmentDraft = { label: "", url: "" };
 
-function createId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function toggleInArray<T>(items: T[], value: T): T[] {
   return items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
 }
@@ -300,20 +304,6 @@ function sanitizeAttachments(attachments: AttachmentLink[]): AttachmentLink[] {
     .filter((attachment): attachment is AttachmentLink => attachment !== null);
 }
 
-function createEmptySubGoal(id: string): SubGoalEntry {
-  return {
-    id,
-    title: "",
-    completed: false,
-    description: "",
-    dueDate: "",
-    priority: "",
-    timeline: "",
-    attachments: [],
-    children: [],
-  };
-}
-
 function normalizeSubGoal(entry: unknown, fallbackId: string): SubGoalEntry {
   if (!entry || typeof entry !== "object") {
     return createEmptySubGoal(fallbackId);
@@ -374,99 +364,12 @@ function sanitizeSubGoalsForStorage(subGoals: SubGoalEntry[]): SubGoalEntry[] {
   }));
 }
 
-function countSubGoalsProgress(subGoals: SubGoalEntry[]): { total: number; completed: number } {
-  return subGoals.reduce(
-    (acc, subGoal) => {
-      const nested = countSubGoalsProgress(subGoal.children);
-      return {
-        total: acc.total + 1 + nested.total,
-        completed: acc.completed + (subGoal.completed ? 1 : 0) + nested.completed,
-      };
-    },
-    { total: 0, completed: 0 }
-  );
-}
-
 function getGoalCompletionFraction(goal: GoalEntry): number {
   const subGoalProgress = countSubGoalsProgress(goal.subGoals);
   if (subGoalProgress.total > 0) {
     return subGoalProgress.completed / subGoalProgress.total;
   }
   return goal.completed ? 1 : 0;
-}
-
-function updateSubGoalById(subGoals: SubGoalEntry[], subGoalId: string, updater: (subGoal: SubGoalEntry) => SubGoalEntry): SubGoalEntry[] {
-  let changed = false;
-  const next = subGoals.map((subGoal) => {
-    if (subGoal.id === subGoalId) {
-      changed = true;
-      return updater(subGoal);
-    }
-
-    const nextChildren = updateSubGoalById(subGoal.children, subGoalId, updater);
-    if (nextChildren !== subGoal.children) {
-      changed = true;
-      return {
-        ...subGoal,
-        children: nextChildren,
-      };
-    }
-
-    return subGoal;
-  });
-
-  return changed ? next : subGoals;
-}
-
-function addChildSubGoalById(subGoals: SubGoalEntry[], parentId: string, child: SubGoalEntry): SubGoalEntry[] {
-  let changed = false;
-  const next = subGoals.map((subGoal) => {
-    if (subGoal.id === parentId) {
-      changed = true;
-      return {
-        ...subGoal,
-        children: [...subGoal.children, child],
-      };
-    }
-
-    const nextChildren = addChildSubGoalById(subGoal.children, parentId, child);
-    if (nextChildren !== subGoal.children) {
-      changed = true;
-      return {
-        ...subGoal,
-        children: nextChildren,
-      };
-    }
-    return subGoal;
-  });
-
-  return changed ? next : subGoals;
-}
-
-function removeSubGoalById(subGoals: SubGoalEntry[], subGoalId: string): SubGoalEntry[] {
-  let changed = false;
-  const next: SubGoalEntry[] = [];
-
-  for (const subGoal of subGoals) {
-    if (subGoal.id === subGoalId) {
-      changed = true;
-      continue;
-    }
-
-    const nextChildren = removeSubGoalById(subGoal.children, subGoalId);
-    if (nextChildren !== subGoal.children) {
-      changed = true;
-      next.push({
-        ...subGoal,
-        children: nextChildren,
-      });
-      continue;
-    }
-
-    next.push(subGoal);
-  }
-
-  return changed ? next : subGoals;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

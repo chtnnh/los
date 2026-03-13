@@ -330,3 +330,108 @@ export function saveLifeDataToStorage(data: LifeData): void {
   }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
+
+export function createId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createEmptySubGoal(id: string): SubGoalEntry {
+  return {
+    id,
+    title: "",
+    completed: false,
+    description: "",
+    dueDate: "",
+    priority: "",
+    timeline: "",
+    attachments: [],
+    children: [],
+  };
+}
+
+export function countSubGoalsProgress(subGoals: SubGoalEntry[]): { total: number; completed: number } {
+  return subGoals.reduce(
+    (acc, subGoal) => {
+      const nested = countSubGoalsProgress(subGoal.children);
+      return {
+        total: acc.total + 1 + nested.total,
+        completed: acc.completed + (subGoal.completed ? 1 : 0) + nested.completed,
+      };
+    },
+    { total: 0, completed: 0 }
+  );
+}
+
+export function updateSubGoalById(subGoals: SubGoalEntry[], subGoalId: string, updater: (subGoal: SubGoalEntry) => SubGoalEntry): SubGoalEntry[] {
+  let changed = false;
+  const next = subGoals.map((subGoal) => {
+    if (subGoal.id === subGoalId) {
+      changed = true;
+      return updater(subGoal);
+    }
+
+    const nextChildren = updateSubGoalById(subGoal.children, subGoalId, updater);
+    if (nextChildren !== subGoal.children) {
+      changed = true;
+      return {
+        ...subGoal,
+        children: nextChildren,
+      };
+    }
+
+    return subGoal;
+  });
+
+  return changed ? next : subGoals;
+}
+
+export function addChildSubGoalById(subGoals: SubGoalEntry[], parentId: string, child: SubGoalEntry): SubGoalEntry[] {
+  let changed = false;
+  const next = subGoals.map((subGoal) => {
+    if (subGoal.id === parentId) {
+      changed = true;
+      return {
+        ...subGoal,
+        children: [...subGoal.children, child],
+      };
+    }
+
+    const nextChildren = addChildSubGoalById(subGoal.children, parentId, child);
+    if (nextChildren !== subGoal.children) {
+      changed = true;
+      return {
+        ...subGoal,
+        children: nextChildren,
+      };
+    }
+    return subGoal;
+  });
+
+  return changed ? next : subGoals;
+}
+
+export function removeSubGoalById(subGoals: SubGoalEntry[], subGoalId: string): SubGoalEntry[] {
+  let changed = false;
+  const next: SubGoalEntry[] = [];
+
+  for (const subGoal of subGoals) {
+    if (subGoal.id === subGoalId) {
+      changed = true;
+      continue;
+    }
+
+    const nextChildren = removeSubGoalById(subGoal.children, subGoalId);
+    if (nextChildren !== subGoal.children) {
+      changed = true;
+      next.push({
+        ...subGoal,
+        children: nextChildren,
+      });
+      continue;
+    }
+
+    next.push(subGoal);
+  }
+
+  return changed ? next : subGoals;
+}
