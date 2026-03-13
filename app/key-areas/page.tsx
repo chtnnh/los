@@ -121,6 +121,24 @@ export default function KeyAreasPage() {
                             {projectTotal === 0 && (
                               <p className="text-xs text-zinc-500">no linked goals</p>
                             )}
+                            {project.attachments.length > 0 && (
+                              <div className="space-y-1">
+                                <p className="text-xs text-zinc-500">attachments</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {project.attachments.map((attachment) => (
+                                    <a
+                                      key={attachment.id}
+                                      href={attachment.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200 underline decoration-zinc-600 hover:border-zinc-500"
+                                    >
+                                      {attachment.label}
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
