@@ -1842,7 +1842,7 @@ export default function Home() {
                               }
                               classNames={{
                                 inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                input: "text-zinc-100 placeholder:text-zinc-500",
+                                input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
                               }}
                               placeholder={`vision for ${AREA_LABELS[area].toLowerCase()}`}
                             />
@@ -2188,7 +2188,7 @@ export default function Home() {
                                   placeholder="description"
                                   classNames={{
                                     inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                    input: "text-zinc-100 placeholder:text-zinc-500",
+                                    input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
                                   }}
                                 />
                                 <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
@@ -2566,7 +2566,7 @@ export default function Home() {
                       placeholder="project description"
                       classNames={{
                         inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                        input: "text-zinc-100 placeholder:text-zinc-500",
+                        input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
                       }}
                     />
                     <Input
@@ -2900,7 +2900,7 @@ export default function Home() {
                             placeholder="project description"
                             classNames={{
                               inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                              input: "text-zinc-100 placeholder:text-zinc-500",
+                              input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
                             }}
                           />
                           <Input
@@ -3283,7 +3283,7 @@ export default function Home() {
                   onValueChange={(value) => setData((prev) => ({ ...prev, todayFocus: value }))}
                   classNames={{
                     inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                    input: "text-zinc-100 placeholder:text-zinc-500",
+                    input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
                   }}
                   placeholder="what 1-3 things move your life forward today?"
                 />
@@ -3294,7 +3294,7 @@ export default function Home() {
                   onValueChange={(value) => setData((prev) => ({ ...prev, energyPlan: value }))}
                   classNames={{
                     inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                    input: "text-zinc-100 placeholder:text-zinc-500",
+                    input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
                   }}
                   placeholder="how are you protecting your energy today?"
                 />

@@ -190,7 +190,7 @@ function EditableSubGoal({ subGoal, onUpdateSubGoals, editingSubGoalId, onSetEdi
         placeholder="sub-goal description"
         classNames={{
           inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-          input: "text-zinc-100 placeholder:text-zinc-500",
+          input: "text-zinc-100 placeholder:text-zinc-500 resize-y",
         }}
       />
       <Input

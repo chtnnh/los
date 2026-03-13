@@ -213,7 +213,7 @@ export default function ProjectsPage() {
                     variant="bordered"
                     classNames={{
                       inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                      input: "text-zinc-100",
+                      input: "text-zinc-100 resize-y",
                       label: "text-zinc-400",
                     }}
                   />
