@@ -8,10 +8,8 @@ import {
   createId,
   createEmptySubGoal,
   countSubGoalsProgress,
-  updateSubGoalById,
-  addChildSubGoalById,
-  removeSubGoalById,
 } from "@/lib/life-os-storage";
+import SubGoalItem from "@/components/SubGoalItem";
 
 type SafeButtonProps = ComponentProps<typeof HeroButton> & {
   type?: "button" | "submit" | "reset";
@@ -814,7 +812,7 @@ export default function Home() {
   const [filters, setFilters] = useState<GoalFilters>({ areaTags: [], projectIds: [] });
   const [projectDraft, setProjectDraft] = useState<ProjectDraft>(createEmptyProjectDraft);
   const [goalAttachmentDrafts, setGoalAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
-  const [subGoalAttachmentDrafts, setSubGoalAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
+  const [editingSubGoalId, setEditingSubGoalId] = useState("");
   const [projectAttachmentDrafts, setProjectAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>(JSON.stringify(defaultData));
   const [lastSavedAt, setLastSavedAt] = useState<string>("");
@@ -1094,66 +1092,6 @@ export default function Home() {
     ]);
   };
 
-  const addChildSubGoal = (kind: GoalType, goalId: string, parentSubGoalId: string) => {
-    const subGoalId = createId("subgoal");
-    updateGoalSubGoals(kind, goalId, (subGoals) =>
-      addChildSubGoalById(subGoals, parentSubGoalId, {
-        ...createEmptySubGoal(subGoalId),
-        title: "new sub-goal",
-      })
-    );
-  };
-
-  const toggleSubGoalCompleted = (kind: GoalType, goalId: string, subGoalId: string) => {
-    updateGoalSubGoals(kind, goalId, (subGoals) =>
-      updateSubGoalById(subGoals, subGoalId, (subGoal) => ({
-        ...subGoal,
-        completed: !subGoal.completed,
-      }))
-    );
-  };
-
-  const updateSubGoalTitle = (kind: GoalType, goalId: string, subGoalId: string, title: string) => {
-    updateGoalSubGoals(kind, goalId, (subGoals) =>
-      updateSubGoalById(subGoals, subGoalId, (subGoal) => ({
-        ...subGoal,
-        title,
-      }))
-    );
-  };
-
-  const removeSubGoal = (kind: GoalType, goalId: string, subGoalId: string) => {
-    let snapshot: LifeData | null = null;
-
-    setData((prev) => {
-      const currentGoal = prev.goals[kind].find((goal) => goal.id === goalId);
-      if (!currentGoal) {
-        return prev;
-      }
-
-      const nextSubGoals = removeSubGoalById(currentGoal.subGoals, subGoalId);
-      if (nextSubGoals === currentGoal.subGoals) {
-        return prev;
-      }
-
-      snapshot = cloneLifeData(prev);
-      return {
-        ...prev,
-        goals: {
-          ...prev.goals,
-          [kind]: prev.goals[kind].map((goal) => (goal.id === goalId ? { ...goal, subGoals: nextSubGoals } : goal)),
-        },
-      };
-    });
-
-    if (snapshot) {
-      const restore = snapshot;
-      registerUndoAction("sub-goal", () => {
-        setData(restore);
-        dataRef.current = restore;
-      });
-    }
-  };
 
   const updateProject = (projectId: string, updater: (project: ProjectEntry) => ProjectEntry) => {
     setData((prev) => ({
@@ -1331,7 +1269,6 @@ export default function Home() {
   }, [isLoaded, persistData, settings.autosaveEnabled, settings.autosaveSeconds]);
 
   const goalDraftKey = (kind: GoalType, goalId: string) => `${kind}:${goalId}`;
-  const subGoalDraftKey = (kind: GoalType, goalId: string, subGoalId: string) => `${kind}:${goalId}:sub:${subGoalId}`;
 
   const setGoalAttachmentDraft = (kind: GoalType, goalId: string, updater: (draft: AttachmentDraft) => AttachmentDraft) => {
     const key = goalDraftKey(kind, goalId);
@@ -1401,97 +1338,6 @@ export default function Home() {
     if (snapshot) {
       const restore = snapshot;
       registerUndoAction("goal attachment", () => {
-        setData(restore);
-        dataRef.current = restore;
-      });
-    }
-  };
-
-  const setSubGoalAttachmentDraft = (
-    kind: GoalType,
-    goalId: string,
-    subGoalId: string,
-    updater: (draft: AttachmentDraft) => AttachmentDraft
-  ) => {
-    const key = subGoalDraftKey(kind, goalId, subGoalId);
-    setSubGoalAttachmentDrafts((prev) => ({
-      ...prev,
-      [key]: updater(prev[key] ?? { ...EMPTY_ATTACHMENT_DRAFT }),
-    }));
-  };
-
-  const addSubGoalAttachmentLink = (kind: GoalType, goalId: string, subGoalId: string) => {
-    const key = subGoalDraftKey(kind, goalId, subGoalId);
-    const draft = subGoalAttachmentDrafts[key] ?? EMPTY_ATTACHMENT_DRAFT;
-    const safeUrl = sanitizeAttachmentUrl(draft.url);
-
-    if (!safeUrl) {
-      setToastMessage("enter a valid link (https/file) or a plain domain like example.com");
-      return;
-    }
-
-    const label = draft.label.trim() || safeUrl.replace(/^https?:\/\//, "").slice(0, 40);
-    updateGoalSubGoals(kind, goalId, (subGoals) =>
-      updateSubGoalById(subGoals, subGoalId, (subGoal) => ({
-        ...subGoal,
-        attachments: [
-          ...subGoal.attachments,
-          {
-            id: createId("subgoal-attachment"),
-            label,
-            url: safeUrl,
-            source: safeUrl.startsWith("data:")
-              ? "embedded-file"
-              : safeUrl.startsWith("local-file://")
-                ? "local-file-ref"
-                : "url",
-          },
-        ],
-      }))
-    );
-
-    setSubGoalAttachmentDrafts((prev) => ({
-      ...prev,
-      [key]: { ...EMPTY_ATTACHMENT_DRAFT },
-    }));
-  };
-
-  const removeSubGoalAttachment = (kind: GoalType, goalId: string, subGoalId: string, attachmentId: string) => {
-    let snapshot: LifeData | null = null;
-
-    setData((prev) => {
-      const currentGoal = prev.goals[kind].find((goal) => goal.id === goalId);
-      if (!currentGoal) {
-        return prev;
-      }
-
-      const nextSubGoals = updateSubGoalById(currentGoal.subGoals, subGoalId, (subGoal) => {
-        if (!subGoal.attachments.some((attachment) => attachment.id === attachmentId)) {
-          return subGoal;
-        }
-        return {
-          ...subGoal,
-          attachments: subGoal.attachments.filter((attachment) => attachment.id !== attachmentId),
-        };
-      });
-
-      if (nextSubGoals === currentGoal.subGoals) {
-        return prev;
-      }
-
-      snapshot = cloneLifeData(prev);
-      return {
-        ...prev,
-        goals: {
-          ...prev.goals,
-          [kind]: prev.goals[kind].map((goal) => (goal.id === goalId ? { ...goal, subGoals: nextSubGoals } : goal)),
-        },
-      };
-    });
-
-    if (snapshot) {
-      const restore = snapshot;
-      registerUndoAction("sub-goal attachment", () => {
         setData(restore);
         dataRef.current = restore;
       });
@@ -2134,305 +1980,6 @@ export default function Home() {
                             setActiveGoalEditorRef(goalRef);
                           };
 
-                          const renderReadOnlySubGoals = (subGoals: SubGoalEntry[], depth = 0) => (
-                            <div className={depth > 0 ? "ml-4 mt-2 space-y-2" : "space-y-2"}>
-                              {subGoals.map((subGoal) => (
-                                <div key={subGoal.id} className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                                  <div className="flex items-center gap-2">
-                                    <Button
-                                      isIconOnly
-                                      size="sm"
-                                      variant="light"
-                                      className={
-                                        subGoal.completed
-                                          ? "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
-                                          : "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
-                                      }
-                                      onClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        toggleSubGoalCompleted(kind, goal.id, subGoal.id);
-                                      }}
-                                    >
-                                      {subGoal.completed ? "✓" : "◯"}
-                                    </Button>
-                                    <p className={`text-xs ${subGoal.completed ? "text-zinc-500 line-through" : "text-zinc-300"}`}>
-                                      {subGoal.title.trim() || "untitled sub-goal"}
-                                    </p>
-                                  </div>
-                                  {subGoal.description.trim().length > 0 && (
-                                    <p className="text-xs leading-relaxed text-zinc-400">{subGoal.description}</p>
-                                  )}
-                                  <div className="flex flex-wrap gap-2">
-                                    {subGoal.dueDate.length > 0 && (
-                                      <Chip variant="flat" className="bg-zinc-800 text-zinc-300">
-                                        due {subGoal.dueDate}
-                                      </Chip>
-                                    )}
-                                    {subGoal.priority && (
-                                      <Chip variant="flat" className="bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                                        {PRIORITY_LABELS[subGoal.priority]}
-                                      </Chip>
-                                    )}
-                                    {subGoal.timeline && (
-                                      <Chip variant="flat" className="bg-blue-500/20 text-blue-300 border border-blue-500/40">
-                                        {TIMELINE_LABELS[subGoal.timeline]}
-                                      </Chip>
-                                    )}
-                                  </div>
-                                  {subGoal.attachments.length > 0 && (
-                                    <div className="flex flex-wrap gap-2">
-                                      {subGoal.attachments.map((attachment) => (
-                                        <button
-                                          key={attachment.id}
-                                          type="button"
-                                          className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 underline decoration-zinc-600"
-                                          onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            openAttachment(attachment);
-                                          }}
-                                        >
-                                          {attachment.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {subGoal.children.length > 0 && renderReadOnlySubGoals(subGoal.children, depth + 1)}
-                                </div>
-                              ))}
-                            </div>
-                          );
-
-                          const renderEditableSubGoals = (subGoals: SubGoalEntry[], depth = 0) => (
-                            <div className={depth > 0 ? "ml-4 mt-2 space-y-2" : "space-y-2"}>
-                              {subGoals.map((subGoal) => {
-                                const subGoalDraft = subGoalAttachmentDrafts[subGoalDraftKey(kind, goal.id, subGoal.id)] ?? EMPTY_ATTACHMENT_DRAFT;
-                                return (
-                                  <div key={subGoal.id} className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                                    <div className="flex items-center gap-2">
-                                      <Button
-                                        isIconOnly
-                                        size="sm"
-                                        variant="light"
-                                        className={
-                                          subGoal.completed
-                                            ? "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
-                                            : "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
-                                        }
-                                        onClick={(event) => {
-                                          event.preventDefault();
-                                          event.stopPropagation();
-                                          toggleSubGoalCompleted(kind, goal.id, subGoal.id);
-                                        }}
-                                      >
-                                        {subGoal.completed ? "✓" : "◯"}
-                                      </Button>
-                                      <Input
-                                        variant="bordered"
-                                        value={subGoal.title}
-                                        onValueChange={(value) => updateSubGoalTitle(kind, goal.id, subGoal.id, value)}
-                                        placeholder="sub-goal title"
-                                        classNames={{
-                                          inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                          input: "text-zinc-100 placeholder:text-zinc-500",
-                                        }}
-                                      />
-                                      <Button
-                                        size="sm"
-                                        variant="light"
-                                        className="text-zinc-400"
-                                        onPress={() => addChildSubGoal(kind, goal.id, subGoal.id)}
-                                      >
-                                        add child
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="light"
-                                        className="text-zinc-500"
-                                        onPress={() => removeSubGoal(kind, goal.id, subGoal.id)}
-                                      >
-                                        remove
-                                      </Button>
-                                    </div>
-                                    <Textarea
-                                      minRows={2}
-                                      variant="bordered"
-                                      value={subGoal.description}
-                                      onValueChange={(value) =>
-                                        updateGoalSubGoals(kind, goal.id, (items) =>
-                                          updateSubGoalById(items, subGoal.id, (item) => ({
-                                            ...item,
-                                            description: value,
-                                          }))
-                                        )
-                                      }
-                                      placeholder="sub-goal description"
-                                      classNames={{
-                                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                        input: "text-zinc-100 placeholder:text-zinc-500",
-                                      }}
-                                    />
-                                    <Input
-                                      type="date"
-                                      label="sub-goal due date"
-                                      labelPlacement="outside"
-                                      variant="bordered"
-                                      value={subGoal.dueDate}
-                                      onValueChange={(value) =>
-                                        updateGoalSubGoals(kind, goal.id, (items) =>
-                                          updateSubGoalById(items, subGoal.id, (item) => ({
-                                            ...item,
-                                            dueDate: value,
-                                          }))
-                                        )
-                                      }
-                                      classNames={{
-                                        inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                        input: "text-zinc-100",
-                                        label: "text-zinc-400",
-                                      }}
-                                    />
-                                    <div className="space-y-2">
-                                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
-                                      <div className="flex flex-wrap gap-2">
-                                        {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
-                                          const selected = subGoal.priority === priority;
-                                          return (
-                                            <Button
-                                              key={`${subGoal.id}-priority-${priority}`}
-                                              size="sm"
-                                              variant={selected ? "flat" : "bordered"}
-                                              className={
-                                                selected
-                                                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                                  : "border-zinc-700 text-zinc-300"
-                                              }
-                                              onPress={() =>
-                                                updateGoalSubGoals(kind, goal.id, (items) =>
-                                                  updateSubGoalById(items, subGoal.id, (item) => ({
-                                                    ...item,
-                                                    priority: item.priority === priority ? "" : priority,
-                                                  }))
-                                                )
-                                              }
-                                            >
-                                              {PRIORITY_LABELS[priority]}
-                                            </Button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">timeline</p>
-                                      <div className="flex flex-wrap gap-2">
-                                        {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
-                                          const selected = subGoal.timeline === timeline;
-                                          return (
-                                            <Button
-                                              key={`${subGoal.id}-timeline-${timeline}`}
-                                              size="sm"
-                                              variant={selected ? "flat" : "bordered"}
-                                              className={
-                                                selected
-                                                  ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
-                                                  : "border-zinc-700 text-zinc-300"
-                                              }
-                                              onPress={() =>
-                                                updateGoalSubGoals(kind, goal.id, (items) =>
-                                                  updateSubGoalById(items, subGoal.id, (item) => ({
-                                                    ...item,
-                                                    timeline: item.timeline === timeline ? "" : timeline,
-                                                  }))
-                                                )
-                                              }
-                                            >
-                                              {TIMELINE_LABELS[timeline]}
-                                            </Button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">attachments</p>
-                                      <div className="grid gap-2 sm:grid-cols-2">
-                                        <Input
-                                          variant="bordered"
-                                          value={subGoalDraft.label}
-                                          onKeyDown={preventEnterSubmit}
-                                          onValueChange={(value) =>
-                                            setSubGoalAttachmentDraft(kind, goal.id, subGoal.id, (prev) => ({ ...prev, label: value }))
-                                          }
-                                          placeholder="attachment label"
-                                          classNames={{
-                                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                            input: "text-zinc-100 placeholder:text-zinc-500",
-                                          }}
-                                        />
-                                        <Input
-                                          variant="bordered"
-                                          value={subGoalDraft.url}
-                                          onKeyDown={preventEnterSubmit}
-                                          onValueChange={(value) =>
-                                            setSubGoalAttachmentDraft(kind, goal.id, subGoal.id, (prev) => ({ ...prev, url: value }))
-                                          }
-                                          placeholder="https://... or /Users/.../file.pdf"
-                                          classNames={{
-                                            inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                            input: "text-zinc-100 placeholder:text-zinc-500",
-                                          }}
-                                        />
-                                      </div>
-                                      <div className="flex flex-wrap gap-2">
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          variant="flat"
-                                          className="bg-zinc-800 text-zinc-200"
-                                          onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            addSubGoalAttachmentLink(kind, goal.id, subGoal.id);
-                                          }}
-                                        >
-                                          add link
-                                        </Button>
-                                      </div>
-                                      <div className="flex flex-wrap gap-2">
-                                        {subGoal.attachments.map((attachment) => (
-                                          <div
-                                            key={attachment.id}
-                                            className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1"
-                                          >
-                                            <button
-                                              type="button"
-                                              className="text-xs text-zinc-200 underline decoration-zinc-600"
-                                              onClick={() => openAttachment(attachment)}
-                                            >
-                                              {attachment.label}
-                                            </button>
-                                            <Button
-                                              size="sm"
-                                              variant="light"
-                                              className="min-w-0 px-1 text-zinc-500"
-                                              onPress={() => removeSubGoalAttachment(kind, goal.id, subGoal.id, attachment.id)}
-                                            >
-                                              x
-                                            </Button>
-                                          </div>
-                                        ))}
-                                        {subGoal.attachments.length === 0 && (
-                                          <span className="text-xs text-zinc-500">no attachments yet</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    {subGoal.children.length > 0 && renderEditableSubGoals(subGoal.children, depth + 1)}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          );
-
                           return (
                             <Card key={goal.id} className={`border border-zinc-800 bg-zinc-950/70 shadow-none ${!isGoalEditing ? "cursor-pointer" : ""}`}>
                               <CardHeader className="flex items-center justify-between gap-3 pb-2" onClick={handleGoalCardClick}>
@@ -2519,7 +2066,17 @@ export default function Home() {
                                         <p className="text-xs text-zinc-400">
                                           {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
                                         </p>
-                                        {renderReadOnlySubGoals(goal.subGoals)}
+                                        <div className="space-y-2">
+                                          {goal.subGoals.map((subGoal) => (
+                                            <SubGoalItem
+                                              key={subGoal.id}
+                                              subGoal={subGoal}
+                                              onUpdateSubGoals={(updater) => updateGoalSubGoals(kind, goal.id, updater)}
+                                              editingSubGoalId={editingSubGoalId}
+                                              onSetEditingSubGoalId={setEditingSubGoalId}
+                                            />
+                                          ))}
+                                        </div>
                                       </div>
                                     )}
                                     <div className="flex flex-wrap gap-2">
@@ -2631,7 +2188,17 @@ export default function Home() {
                                       <p className="text-xs text-zinc-400">
                                         {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
                                       </p>
-                                      {renderEditableSubGoals(goal.subGoals)}
+                                      <div className="space-y-2">
+                                        {goal.subGoals.map((subGoal) => (
+                                          <SubGoalItem
+                                            key={subGoal.id}
+                                            subGoal={subGoal}
+                                            onUpdateSubGoals={(updater) => updateGoalSubGoals(kind, goal.id, updater)}
+                                            editingSubGoalId={editingSubGoalId}
+                                            onSetEditingSubGoalId={setEditingSubGoalId}
+                                          />
+                                        ))}
+                                      </div>
                                     </>
                                   ) : (
                                     <p className="text-sm text-zinc-500">no sub-goals yet.</p>

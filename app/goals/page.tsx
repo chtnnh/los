@@ -10,15 +10,12 @@ import {
   PRIORITY_TAG_CLASSES,
   TIMELINE_LABELS,
   TIMELINE_TAG_CLASS,
-  addChildSubGoalById,
   countSubGoalsProgress,
   createEmptySubGoal,
   createId,
   defaultLifeData,
   loadLifeDataFromStorage,
-  removeSubGoalById,
   saveLifeDataToStorage,
-  updateSubGoalById,
   type GoalEntry,
   type GoalType,
   type LifeArea,
@@ -26,6 +23,7 @@ import {
   type SubGoalEntry,
   type TimelineTag,
 } from "@/lib/life-os-storage";
+import SubGoalItem from "@/components/SubGoalItem";
 
 type GoalWithType = GoalEntry & { goalType: GoalType };
 
@@ -37,6 +35,7 @@ export default function GoalsPage() {
   const [data, setData] = useState(defaultLifeData);
   const [selectedGoalRef, setSelectedGoalRef] = useState("");
   const [editMode, setEditMode] = useState(false);
+  const [editingSubGoalId, setEditingSubGoalId] = useState("");
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -93,6 +92,66 @@ export default function GoalsPage() {
     }));
   };
 
+  const handleUpdateSubGoals = (updater: (subGoals: SubGoalEntry[]) => SubGoalEntry[]) => {
+    updateSelectedGoal((goal) => ({ ...goal, subGoals: updater(goal.subGoals) }));
+  };
+
+  const subGoalsSection = selectedGoal && (() => {
+    const subGoalProgress = countSubGoalsProgress(selectedGoal.subGoals);
+    const hasSubGoals = subGoalProgress.total > 0;
+    const percent = hasSubGoals ? Math.round((subGoalProgress.completed / subGoalProgress.total) * 100) : 0;
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">sub-goals</p>
+          <Button
+            size="sm"
+            variant="flat"
+            className="bg-zinc-800 text-zinc-200"
+            onPress={() => {
+              const newId = createId("subgoal");
+              updateSelectedGoal((goal) => ({
+                ...goal,
+                subGoals: [
+                  ...goal.subGoals,
+                  { ...createEmptySubGoal(newId), title: "new sub-goal" },
+                ],
+              }));
+              setEditingSubGoalId(newId);
+            }}
+          >
+            add sub-goal
+          </Button>
+        </div>
+        {hasSubGoals && (
+          <>
+            <Progress
+              size="sm"
+              aria-label={`sub-goal progress for ${selectedGoal.title || "goal"}`}
+              value={percent}
+              classNames={{ track: "bg-zinc-800", indicator: "bg-emerald-500" }}
+            />
+            <p className="text-xs text-zinc-400">
+              {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
+            </p>
+            <div className="space-y-2">
+              {selectedGoal.subGoals.map((subGoal) => (
+                <SubGoalItem
+                  key={subGoal.id}
+                  subGoal={subGoal}
+                  onUpdateSubGoals={handleUpdateSubGoals}
+                  editingSubGoalId={editingSubGoalId}
+                  onSetEditingSubGoalId={setEditingSubGoalId}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        {!hasSubGoals && <p className="text-sm text-zinc-500">no sub-goals yet.</p>}
+      </div>
+    );
+  })();
+
   return (
     <div className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-100 sm:px-8 sm:py-10 font-[family-name:var(--font-space-grotesk)]">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -121,6 +180,7 @@ export default function GoalsPage() {
                     onClick={() => {
                       setSelectedGoalRef(getGoalRef(goal));
                       setEditMode(false);
+                      setEditingSubGoalId("");
                     }}
                     className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-cyan-500/60 bg-zinc-900" : "border-zinc-800 bg-zinc-950/50 hover:border-zinc-600"}`}
                   >
@@ -208,81 +268,7 @@ export default function GoalsPage() {
                       </Chip>
                     )}
                   </div>
-                  {(() => {
-                    const subGoalProgress = countSubGoalsProgress(selectedGoal.subGoals);
-                    const hasSubGoals = subGoalProgress.total > 0;
-                    if (!hasSubGoals) return null;
-                    const percent = Math.round((subGoalProgress.completed / subGoalProgress.total) * 100);
-
-                    const renderReadOnlySubGoals = (subGoals: SubGoalEntry[], depth = 0) => (
-                      <div className={depth > 0 ? "ml-4 mt-2 space-y-2" : "space-y-2"}>
-                        {subGoals.map((subGoal) => (
-                          <div key={subGoal.id} className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                            <div className="flex items-center gap-2">
-                              <Button
-                                isIconOnly
-                                size="sm"
-                                variant="light"
-                                className={
-                                  subGoal.completed
-                                    ? "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
-                                    : "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
-                                }
-                                onPress={() =>
-                                  updateSelectedGoal((goal) => ({
-                                    ...goal,
-                                    subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({ ...s, completed: !s.completed })),
-                                  }))
-                                }
-                              >
-                                {subGoal.completed ? "✓" : "◯"}
-                              </Button>
-                              <p className={`text-xs ${subGoal.completed ? "text-zinc-500 line-through" : "text-zinc-300"}`}>
-                                {subGoal.title.trim() || "untitled sub-goal"}
-                              </p>
-                            </div>
-                            {subGoal.description.trim().length > 0 && (
-                              <p className="text-xs leading-relaxed text-zinc-400">{subGoal.description}</p>
-                            )}
-                            <div className="flex flex-wrap gap-2">
-                              {subGoal.dueDate.length > 0 && (
-                                <Chip size="sm" variant="flat" className="bg-zinc-800 text-zinc-300">
-                                  due {subGoal.dueDate}
-                                </Chip>
-                              )}
-                              {subGoal.priority && (
-                                <Chip size="sm" variant="flat" className={PRIORITY_TAG_CLASSES[subGoal.priority]}>
-                                  {PRIORITY_LABELS[subGoal.priority]}
-                                </Chip>
-                              )}
-                              {subGoal.timeline && (
-                                <Chip size="sm" variant="flat" className={TIMELINE_TAG_CLASS}>
-                                  {TIMELINE_LABELS[subGoal.timeline]}
-                                </Chip>
-                              )}
-                            </div>
-                            {subGoal.children.length > 0 && renderReadOnlySubGoals(subGoal.children, depth + 1)}
-                          </div>
-                        ))}
-                      </div>
-                    );
-
-                    return (
-                      <div className="space-y-3">
-                        <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">sub-goals</p>
-                        <Progress
-                          size="sm"
-                          aria-label={`sub-goal progress for ${selectedGoal.title || "goal"}`}
-                          value={percent}
-                          classNames={{ track: "bg-zinc-800", indicator: "bg-emerald-500" }}
-                        />
-                        <p className="text-xs text-zinc-400">
-                          {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
-                        </p>
-                        {renderReadOnlySubGoals(selectedGoal.subGoals)}
-                      </div>
-                    );
-                  })()}
+                  {subGoalsSection}
                 </>
               )}
 
@@ -404,220 +390,7 @@ export default function GoalsPage() {
                       })}
                     </div>
                   </div>
-                  {(() => {
-                    const subGoalProgress = countSubGoalsProgress(selectedGoal.subGoals);
-                    const hasSubGoals = subGoalProgress.total > 0;
-                    const percent = hasSubGoals ? Math.round((subGoalProgress.completed / subGoalProgress.total) * 100) : 0;
-
-                    const renderEditableSubGoals = (subGoals: SubGoalEntry[], depth = 0) => (
-                      <div className={depth > 0 ? "ml-4 mt-2 space-y-2" : "space-y-2"}>
-                        {subGoals.map((subGoal) => (
-                          <div key={subGoal.id} className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                            <div className="flex items-center gap-2">
-                              <Button
-                                isIconOnly
-                                size="sm"
-                                variant="light"
-                                className={
-                                  subGoal.completed
-                                    ? "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-emerald-300 shadow-none data-[hover=true]:bg-transparent"
-                                    : "h-8 w-8 min-w-8 rounded-full border-0 bg-transparent p-0 text-xl font-black leading-none text-zinc-300 shadow-none data-[hover=true]:bg-transparent"
-                                }
-                                onPress={() =>
-                                  updateSelectedGoal((goal) => ({
-                                    ...goal,
-                                    subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({ ...s, completed: !s.completed })),
-                                  }))
-                                }
-                              >
-                                {subGoal.completed ? "✓" : "◯"}
-                              </Button>
-                              <Input
-                                variant="bordered"
-                                value={subGoal.title}
-                                onValueChange={(value) =>
-                                  updateSelectedGoal((goal) => ({
-                                    ...goal,
-                                    subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({ ...s, title: value })),
-                                  }))
-                                }
-                                placeholder="sub-goal title"
-                                classNames={{
-                                  inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                  input: "text-zinc-100 placeholder:text-zinc-500",
-                                }}
-                              />
-                              <Button
-                                size="sm"
-                                variant="light"
-                                className="text-zinc-400"
-                                onPress={() =>
-                                  updateSelectedGoal((goal) => ({
-                                    ...goal,
-                                    subGoals: addChildSubGoalById(goal.subGoals, subGoal.id, {
-                                      ...createEmptySubGoal(createId("subgoal")),
-                                      title: "new sub-goal",
-                                    }),
-                                  }))
-                                }
-                              >
-                                add child
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="light"
-                                className="text-zinc-500"
-                                onPress={() =>
-                                  updateSelectedGoal((goal) => ({
-                                    ...goal,
-                                    subGoals: removeSubGoalById(goal.subGoals, subGoal.id),
-                                  }))
-                                }
-                              >
-                                remove
-                              </Button>
-                            </div>
-                            <Textarea
-                              minRows={2}
-                              variant="bordered"
-                              value={subGoal.description}
-                              onValueChange={(value) =>
-                                updateSelectedGoal((goal) => ({
-                                  ...goal,
-                                  subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({ ...s, description: value })),
-                                }))
-                              }
-                              placeholder="sub-goal description"
-                              classNames={{
-                                inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                input: "text-zinc-100 placeholder:text-zinc-500",
-                              }}
-                            />
-                            <Input
-                              type="date"
-                              label="sub-goal due date"
-                              labelPlacement="outside"
-                              variant="bordered"
-                              value={subGoal.dueDate}
-                              onValueChange={(value) =>
-                                updateSelectedGoal((goal) => ({
-                                  ...goal,
-                                  subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({ ...s, dueDate: value })),
-                                }))
-                              }
-                              classNames={{
-                                inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
-                                input: "text-zinc-100",
-                                label: "text-zinc-400",
-                              }}
-                            />
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
-                              <div className="flex flex-wrap gap-2">
-                                {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
-                                  const selected = subGoal.priority === priority;
-                                  return (
-                                    <Button
-                                      key={`${subGoal.id}-priority-${priority}`}
-                                      size="sm"
-                                      variant={selected ? "flat" : "bordered"}
-                                      className={
-                                        selected
-                                          ? PRIORITY_TAG_CLASSES[priority]
-                                          : "border-zinc-700 text-zinc-300"
-                                      }
-                                      onPress={() =>
-                                        updateSelectedGoal((goal) => ({
-                                          ...goal,
-                                          subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({
-                                            ...s,
-                                            priority: s.priority === priority ? "" : priority,
-                                          })),
-                                        }))
-                                      }
-                                    >
-                                      {PRIORITY_LABELS[priority]}
-                                    </Button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">timeline</p>
-                              <div className="flex flex-wrap gap-2">
-                                {(Object.keys(TIMELINE_LABELS) as TimelineTag[]).map((timeline) => {
-                                  const selected = subGoal.timeline === timeline;
-                                  return (
-                                    <Button
-                                      key={`${subGoal.id}-timeline-${timeline}`}
-                                      size="sm"
-                                      variant={selected ? "flat" : "bordered"}
-                                      className={
-                                        selected
-                                          ? "bg-indigo-500/15 text-indigo-300 border border-indigo-500/40"
-                                          : "border-zinc-700 text-zinc-300"
-                                      }
-                                      onPress={() =>
-                                        updateSelectedGoal((goal) => ({
-                                          ...goal,
-                                          subGoals: updateSubGoalById(goal.subGoals, subGoal.id, (s) => ({
-                                            ...s,
-                                            timeline: s.timeline === timeline ? "" : timeline,
-                                          })),
-                                        }))
-                                      }
-                                    >
-                                      {TIMELINE_LABELS[timeline]}
-                                    </Button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            {subGoal.children.length > 0 && renderEditableSubGoals(subGoal.children, depth + 1)}
-                          </div>
-                        ))}
-                      </div>
-                    );
-
-                    return (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">sub-goals</p>
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            className="bg-zinc-800 text-zinc-200"
-                            onPress={() =>
-                              updateSelectedGoal((goal) => ({
-                                ...goal,
-                                subGoals: [
-                                  ...goal.subGoals,
-                                  { ...createEmptySubGoal(createId("subgoal")), title: "new sub-goal" },
-                                ],
-                              }))
-                            }
-                          >
-                            add sub-goal
-                          </Button>
-                        </div>
-                        {hasSubGoals && (
-                          <>
-                            <Progress
-                              size="sm"
-                              aria-label={`sub-goal progress for ${selectedGoal.title || "goal"}`}
-                              value={percent}
-                              classNames={{ track: "bg-zinc-800", indicator: "bg-emerald-500" }}
-                            />
-                            <p className="text-xs text-zinc-400">
-                              {subGoalProgress.completed}/{subGoalProgress.total} sub-goals done
-                            </p>
-                            {renderEditableSubGoals(selectedGoal.subGoals)}
-                          </>
-                        )}
-                        {!hasSubGoals && <p className="text-sm text-zinc-500">no sub-goals yet.</p>}
-                      </div>
-                    );
-                  })()}
+                  {subGoalsSection}
                 </>
               )}
             </CardBody>
