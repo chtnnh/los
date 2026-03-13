@@ -111,6 +111,7 @@ type UploadTarget =
 
 type LifeData = {
   visions: Record<LifeArea, string>;
+  keyAreaDescriptions: Record<LifeArea, string>;
   goals: Record<GoalType, GoalEntry[]>;
   projects: ProjectEntry[];
   todayGoalRef: string;
@@ -441,6 +442,14 @@ const defaultData: LifeData = {
     learning: "",
     soul: "",
   },
+  keyAreaDescriptions: {
+    health: "",
+    work: "",
+    relationships: "",
+    financial: "",
+    learning: "",
+    soul: "",
+  },
   goals: {
     daily: createDefaultGoals("daily"),
     weekly: createDefaultGoals("weekly"),
@@ -714,6 +723,7 @@ function normalizeData(parsed: unknown): LifeData {
 
   const value = parsed as {
     visions?: Record<string, string>;
+    keyAreaDescriptions?: Record<string, string>;
     goals?: Record<string, unknown>;
     projects?: unknown[];
     todayGoalRef?: string;
@@ -730,6 +740,14 @@ function normalizeData(parsed: unknown): LifeData {
       financial: value.visions?.financial ?? value.visions?.money ?? "",
       learning: value.visions?.learning ?? value.visions?.mind ?? "",
       soul: value.visions?.soul ?? "",
+    },
+    keyAreaDescriptions: {
+      health: value.keyAreaDescriptions?.health ?? "",
+      work: value.keyAreaDescriptions?.work ?? "",
+      relationships: value.keyAreaDescriptions?.relationships ?? "",
+      financial: value.keyAreaDescriptions?.financial ?? "",
+      learning: value.keyAreaDescriptions?.learning ?? "",
+      soul: value.keyAreaDescriptions?.soul ?? "",
     },
     goals: {
       daily: normalizeGoals(value.goals?.daily, "daily"),
@@ -757,6 +775,14 @@ function sanitizeDataForStorage(data: LifeData): LifeData {
       financial: data.visions.financial.trim(),
       learning: data.visions.learning.trim(),
       soul: data.visions.soul.trim(),
+    },
+    keyAreaDescriptions: {
+      health: data.keyAreaDescriptions.health.trim(),
+      work: data.keyAreaDescriptions.work.trim(),
+      relationships: data.keyAreaDescriptions.relationships.trim(),
+      financial: data.keyAreaDescriptions.financial.trim(),
+      learning: data.keyAreaDescriptions.learning.trim(),
+      soul: data.keyAreaDescriptions.soul.trim(),
     },
     goals: {
       daily: data.goals.daily.map((goal) => ({

@@ -52,6 +52,7 @@ export type ProjectEntry = {
 
 export type LifeData = {
   visions: Record<LifeArea, string>;
+  keyAreaDescriptions: Record<LifeArea, string>;
   goals: Record<GoalType, GoalEntry[]>;
   projects: ProjectEntry[];
   todayGoalRef: string;
@@ -105,6 +106,14 @@ export const TIMELINE_TAG_CLASS = "bg-indigo-500/15 text-indigo-300 border borde
 
 export const defaultLifeData: LifeData = {
   visions: {
+    health: "",
+    work: "",
+    relationships: "",
+    financial: "",
+    learning: "",
+    soul: "",
+  },
+  keyAreaDescriptions: {
     health: "",
     work: "",
     relationships: "",
@@ -283,10 +292,17 @@ export function normalizeLifeData(parsed: unknown): LifeData {
 
   const value = parsed as Partial<LifeData>;
   const visionsFromStorage = value.visions && typeof value.visions === "object" ? value.visions : {};
+  const keyAreaDescFromStorage = value.keyAreaDescriptions && typeof value.keyAreaDescriptions === "object" ? value.keyAreaDescriptions : {};
   const goalsFromStorage = value.goals && typeof value.goals === "object" ? value.goals : {};
 
   const visions = LIFE_AREAS.reduce<Record<LifeArea, string>>((acc, area) => {
     const raw = (visionsFromStorage as Record<string, unknown>)[area];
+    acc[area] = typeof raw === "string" ? raw : "";
+    return acc;
+  }, {} as Record<LifeArea, string>);
+
+  const keyAreaDescriptions = LIFE_AREAS.reduce<Record<LifeArea, string>>((acc, area) => {
+    const raw = (keyAreaDescFromStorage as Record<string, unknown>)[area];
     acc[area] = typeof raw === "string" ? raw : "";
     return acc;
   }, {} as Record<LifeArea, string>);
@@ -299,6 +315,7 @@ export function normalizeLifeData(parsed: unknown): LifeData {
 
   return {
     visions,
+    keyAreaDescriptions,
     goals,
     projects: normalizeProjectEntries(value.projects),
     todayGoalRef: typeof value.todayGoalRef === "string" ? value.todayGoalRef : "",
