@@ -8,6 +8,7 @@ import {
   createId,
   createEmptySubGoal,
   countSubGoalsProgress,
+  syncGoalCompletedWithSubGoals,
 } from "@/lib/life-os-storage";
 import SubGoalItem from "@/components/SubGoalItem";
 
@@ -1075,10 +1076,9 @@ export default function Home() {
     goalId: string,
     updater: (subGoals: SubGoalEntry[]) => SubGoalEntry[]
   ) => {
-    updateGoal(kind, goalId, (goal) => ({
-      ...goal,
-      subGoals: updater(goal.subGoals),
-    }));
+    updateGoal(kind, goalId, (goal) =>
+      syncGoalCompletedWithSubGoals({ ...goal, subGoals: updater(goal.subGoals) }),
+    );
   };
 
   const addRootSubGoal = (kind: GoalType, goalId: string) => {

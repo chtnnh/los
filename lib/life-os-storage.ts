@@ -362,6 +362,18 @@ export function countSubGoalsProgress(subGoals: SubGoalEntry[]): { total: number
   );
 }
 
+export function syncGoalCompletedWithSubGoals(goal: GoalEntry): GoalEntry {
+  const progress = countSubGoalsProgress(goal.subGoals);
+  if (progress.total === 0) {
+    return goal;
+  }
+  const allDone = progress.completed === progress.total;
+  if (goal.completed === allDone) {
+    return goal;
+  }
+  return { ...goal, completed: allDone };
+}
+
 export function updateSubGoalById(subGoals: SubGoalEntry[], subGoalId: string, updater: (subGoal: SubGoalEntry) => SubGoalEntry): SubGoalEntry[] {
   let changed = false;
   const next = subGoals.map((subGoal) => {

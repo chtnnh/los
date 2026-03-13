@@ -14,6 +14,7 @@ import {
   createEmptySubGoal,
   createId,
   defaultLifeData,
+  syncGoalCompletedWithSubGoals,
   loadLifeDataFromStorage,
   saveLifeDataToStorage,
   type GoalEntry,
@@ -93,7 +94,9 @@ export default function GoalsPage() {
   };
 
   const handleUpdateSubGoals = (updater: (subGoals: SubGoalEntry[]) => SubGoalEntry[]) => {
-    updateSelectedGoal((goal) => ({ ...goal, subGoals: updater(goal.subGoals) }));
+    updateSelectedGoal((goal) =>
+      syncGoalCompletedWithSubGoals({ ...goal, subGoals: updater(goal.subGoals) }),
+    );
   };
 
   const subGoalsSection = selectedGoal && (() => {
