@@ -10,6 +10,14 @@ import {
   countSubGoalsProgress,
   syncGoalCompletedWithSubGoals,
 } from "@/lib/life-os-storage";
+import {
+  LEGACY_SETTINGS_STORAGE_KEY,
+  LEGACY_STORAGE_KEY,
+  loadPersistedData,
+  loadPersistedSettings,
+  persistData as persistDataToDb,
+  persistSettings as persistSettingsToDb,
+} from "@/lib/browser-storage";
 import SubGoalItem from "@/components/SubGoalItem";
 
 type SafeButtonProps = ComponentProps<typeof HeroButton> & {
@@ -120,8 +128,6 @@ type LifeData = {
   energyPlan: string;
 };
 
-const STORAGE_KEY = "life-os-data-v1";
-const SETTINGS_STORAGE_KEY = "life-os-settings-v1";
 const MAX_SINGLE_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const MAX_UPLOAD_BATCH_BYTES = 3 * 1024 * 1024;
 
@@ -843,6 +849,8 @@ export default function Home() {
   const [projectAttachmentDrafts, setProjectAttachmentDrafts] = useState<Record<string, AttachmentDraft>>({});
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState<string>(JSON.stringify(defaultData));
   const [lastSavedAt, setLastSavedAt] = useState<string>("");
+  const [autosaveQueued, setAutosaveQueued] = useState(false);
+  const [autosaveInProgress, setAutosaveInProgress] = useState(false);
   const [toastMessage, setToastMessage] = useState<string>("");
   const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -867,8 +875,10 @@ export default function Home() {
   });
 
   const filePickerRef = useRef<HTMLInputElement | null>(null);
+  const importFilePickerRef = useRef<HTMLInputElement | null>(null);
   const dataRef = useRef<LifeData>(defaultData);
-  const hasUnsavedRef = useRef(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleSection = useCallback((section: SectionKey) => {
     setCollapsedSections((prev) => ({
@@ -900,23 +910,50 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const loadedData = raw ? normalizeData(JSON.parse(raw) as unknown) : defaultData;
-      setData(loadedData);
-      dataRef.current = loadedData;
-      setLastSavedSnapshot(JSON.stringify(loadedData));
+    let cancelled = false;
 
-      const rawSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      setSettings(rawSettings ? normalizeSettings(JSON.parse(rawSettings) as unknown) : defaultSettings);
-    } catch {
-      setData(defaultData);
-      dataRef.current = defaultData;
-      setLastSavedSnapshot(JSON.stringify(defaultData));
-      setSettings(defaultSettings);
-    } finally {
-      setIsLoaded(true);
-    }
+    const loadInitialState = async () => {
+      try {
+        const [rawDataFromDb, rawSettingsFromDb] = await Promise.all([loadPersistedData(), loadPersistedSettings()]);
+        const rawData = rawDataFromDb ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+        const rawSettings = rawSettingsFromDb ?? localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY);
+
+        const loadedData = rawData ? normalizeData(JSON.parse(rawData) as unknown) : defaultData;
+        const loadedSettings = rawSettings ? normalizeSettings(JSON.parse(rawSettings) as unknown) : defaultSettings;
+
+        if (!cancelled) {
+          setData(loadedData);
+          dataRef.current = loadedData;
+          setLastSavedSnapshot(JSON.stringify(loadedData));
+          setSettings(loadedSettings);
+        }
+
+        if (!rawDataFromDb && rawData) {
+          void persistDataToDb(JSON.stringify(loadedData));
+        }
+
+        if (!rawSettingsFromDb && rawSettings) {
+          void persistSettingsToDb(JSON.stringify(loadedSettings));
+        }
+      } catch {
+        if (!cancelled) {
+          setData(defaultData);
+          dataRef.current = defaultData;
+          setLastSavedSnapshot(JSON.stringify(defaultData));
+          setSettings(defaultSettings);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoaded(true);
+        }
+      }
+    };
+
+    void loadInitialState();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -944,15 +981,24 @@ export default function Home() {
   }, [data]);
 
   useEffect(() => {
-    hasUnsavedRef.current = hasUnsavedChanges;
-  }, [hasUnsavedChanges]);
-
-  useEffect(() => {
     if (!isLoaded) {
       return;
     }
 
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    if (settingsPersistTimerRef.current) {
+      clearTimeout(settingsPersistTimerRef.current);
+    }
+
+    settingsPersistTimerRef.current = setTimeout(() => {
+      void persistSettingsToDb(JSON.stringify(settings));
+    }, 250);
+
+    return () => {
+      if (settingsPersistTimerRef.current) {
+        clearTimeout(settingsPersistTimerRef.current);
+        settingsPersistTimerRef.current = null;
+      }
+    };
   }, [isLoaded, settings]);
 
   const filledCount = useMemo(() => {
@@ -1246,12 +1292,17 @@ export default function Home() {
   };
 
   const persistData = useCallback(
-    (sourceData: LifeData, mode: "manual" | "autosave") => {
+    async (sourceData: LifeData, mode: "manual" | "autosave") => {
       try {
+        if (mode === "autosave") {
+          setAutosaveInProgress(true);
+          setAutosaveQueued(false);
+        }
+
         const safeData = sanitizeDataForStorage(sourceData);
         const serialized = JSON.stringify(safeData);
 
-        localStorage.setItem(STORAGE_KEY, serialized);
+        await persistDataToDb(serialized);
         setData(safeData);
         dataRef.current = safeData;
         setLastSavedSnapshot(serialized);
@@ -1263,36 +1314,111 @@ export default function Home() {
         );
 
         if (mode === "manual") {
-          setToastMessage("saved to your browser storage");
+          setToastMessage("saved");
         } else if (settings.showAutosaveToast) {
           setToastMessage("autosaved");
         }
       } catch {
-        setToastMessage("save failed. storage is full or blocked.");
+        setToastMessage("save failed. storage unavailable.");
+      } finally {
+        if (mode === "autosave") {
+          setAutosaveInProgress(false);
+        }
       }
     },
     [settings.showAutosaveToast]
   );
 
   const saveChanges = () => {
-    persistData(dataRef.current, "manual");
+    void persistData(dataRef.current, "manual");
   };
 
-  useEffect(() => {
-    if (!isLoaded || !settings.autosaveEnabled) {
+  const exportDataBackup = () => {
+    try {
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        data: sanitizeDataForStorage(dataRef.current),
+        settings,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = url;
+      anchor.download = `life-os-backup-${timestamp}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setToastMessage("backup exported");
+    } catch {
+      setToastMessage("export failed");
+    }
+  };
+
+  const importDataBackup = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
       return;
     }
 
-    const timer = setInterval(() => {
-      if (!hasUnsavedRef.current) {
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as { data?: unknown; settings?: unknown } | null;
+      if (!parsed || typeof parsed !== "object" || parsed.data === undefined) {
+        setToastMessage("invalid backup file");
         return;
       }
 
-      persistData(dataRef.current, "autosave");
+      const nextData = normalizeData(parsed.data);
+      const nextSettings = parsed.settings !== undefined ? normalizeSettings(parsed.settings) : defaultSettings;
+      const serialized = JSON.stringify(nextData);
+
+      setData(nextData);
+      dataRef.current = nextData;
+      setSettings(nextSettings);
+      setLastSavedSnapshot(serialized);
+      setLastSavedAt(
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+      setAutosaveQueued(false);
+      setAutosaveInProgress(false);
+
+      await Promise.all([persistDataToDb(serialized), persistSettingsToDb(JSON.stringify(nextSettings))]);
+      setToastMessage("backup imported");
+    } catch {
+      setToastMessage("import failed. use a valid .json backup.");
+    }
+  };
+
+  useEffect(() => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+
+    if (!isLoaded || !settings.autosaveEnabled || !hasUnsavedChanges) {
+      setAutosaveQueued(false);
+      return;
+    }
+
+    setAutosaveQueued(true);
+
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void persistData(dataRef.current, "autosave");
     }, settings.autosaveSeconds * 1000);
 
-    return () => clearInterval(timer);
-  }, [isLoaded, persistData, settings.autosaveEnabled, settings.autosaveSeconds]);
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [data, hasUnsavedChanges, isLoaded, persistData, settings.autosaveEnabled, settings.autosaveSeconds]);
 
   const goalDraftKey = (kind: GoalType, goalId: string) => `${kind}:${goalId}`;
 
@@ -1584,6 +1710,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-[family-name:var(--font-space-grotesk)]">
       <input ref={filePickerRef} type="file" multiple className="hidden" onChange={handleAttachmentFileUpload} />
+      <input ref={importFilePickerRef} type="file" accept="application/json" className="hidden" onChange={importDataBackup} />
       {toastMessage && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -1638,12 +1765,20 @@ export default function Home() {
             <Chip
               variant="flat"
               className={
-                hasUnsavedChanges
+                autosaveInProgress
+                  ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                  : hasUnsavedChanges
                   ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
                   : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
               }
             >
-              {hasUnsavedChanges ? "unsaved changes" : "all saved"}
+              {autosaveInProgress
+                ? "autosaving..."
+                : hasUnsavedChanges
+                  ? settings.autosaveEnabled && autosaveQueued
+                    ? "unsaved (autosave queued)"
+                    : "unsaved changes"
+                  : "all saved"}
             </Chip>
             <Button
               size="sm"
@@ -1673,15 +1808,25 @@ export default function Home() {
             </Button>
             */}
             <div className="relative">
+              {showSettingsMenu && (
+                <button
+                  type="button"
+                  aria-label="close settings menu"
+                  className="fixed inset-0 z-30 cursor-default bg-transparent"
+                  onClick={() => setShowSettingsMenu(false)}
+                />
+              )}
               <Button
                 size="md"
-                variant="flat"
+                variant="solid"
                 isIconOnly
+                disableRipple
                 aria-label="settings"
-                className="h-12 w-12 border-0 bg-zinc-700 text-zinc-100 shadow-none"
+                className="h-12 w-12 min-w-12 border-none bg-zinc-700 text-zinc-100 shadow-none outline-none ring-0 focus-visible:outline-none focus-visible:ring-0"
+                style={{ border: "none", boxShadow: "none", outline: "none" }}
                 onPress={() => setShowSettingsMenu((prev) => !prev)}
               >
-                <span className="text-2xl leading-none">⚙</span>
+                <span className="text-[1.575rem] leading-none">⚙</span>
               </Button>
 
               {showSettingsMenu && (
@@ -1733,6 +1878,23 @@ export default function Home() {
                   >
                     show autosave toasts
                   </Switch>
+
+                  <div className="space-y-2 border-t border-zinc-800 pt-3">
+                    <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">data transfer</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="flat" className="bg-zinc-800 text-zinc-200" onPress={exportDataBackup}>
+                        export data
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        className="bg-zinc-800 text-zinc-200"
+                        onPress={() => importFilePickerRef.current?.click()}
+                      >
+                        import data
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -2193,7 +2355,7 @@ export default function Home() {
                                 />
                                 <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
                                   <div className="flex items-center justify-between gap-2">
-                                    <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">sub-goals</p>
+                                    <p className="text-xs uppercase tracking-[0.14em] text-zinc-300">sub-goals</p>
                                     <Button
                                       size="sm"
                                       variant="flat"
@@ -2241,12 +2403,12 @@ export default function Home() {
                                   classNames={{
                                     inputWrapper: "bg-zinc-950 border-zinc-700 data-[hover=true]:border-zinc-500",
                                     input: "text-zinc-100",
-                                    label: "text-zinc-400",
+                                    label: "!text-zinc-300",
                                   }}
                                 />
 
                                 <div className="space-y-2">
-                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">priority</p>
+                                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-300">priority</p>
                                   <div className="flex flex-wrap gap-2">
                                     {(Object.keys(PRIORITY_LABELS) as PriorityTag[]).map((priority) => {
                                       const selected = goal.priority === priority;
