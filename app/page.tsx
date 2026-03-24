@@ -3,7 +3,18 @@
 import { Button as HeroButton, Card, CardBody, CardHeader, Chip, Input, Progress, Select, SelectItem, Switch, Textarea } from "@heroui/react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ChangeEvent,
+  type ComponentProps,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import {
   createId,
   createEmptySubGoal,
@@ -139,8 +150,16 @@ type AppSettings = {
   autosaveEnabled: boolean;
   autosaveSeconds: number;
   showAutosaveToast: boolean;
+  layoutEditMode: boolean;
+  dashboardColumns: 1 | 2;
+  columnSplitPercent: number;
+  leftSectionOrder: Array<Extract<SectionKey, "vision" | "goals">>;
+  rightSectionOrder: Array<Extract<SectionKey, "projects" | "today" | "note">>;
 };
 type SectionKey = "vision" | "goals" | "today" | "projects" | "note";
+
+const DEFAULT_LEFT_SECTION_ORDER: Array<Extract<SectionKey, "vision" | "goals">> = ["vision", "goals"];
+const DEFAULT_RIGHT_SECTION_ORDER: Array<Extract<SectionKey, "projects" | "today" | "note">> = ["projects", "today", "note"];
 
 const AREA_LABELS: Record<LifeArea, string> = {
   health: "Health",
@@ -476,10 +495,19 @@ const defaultSettings: AppSettings = {
   autosaveEnabled: true,
   autosaveSeconds: 60,
   showAutosaveToast: false,
+  layoutEditMode: false,
+  dashboardColumns: 2,
+  columnSplitPercent: 60,
+  leftSectionOrder: [...DEFAULT_LEFT_SECTION_ORDER],
+  rightSectionOrder: [...DEFAULT_RIGHT_SECTION_ORDER],
 };
 
 function clampAutosaveSeconds(seconds: number): number {
   return Math.min(600, Math.max(15, seconds));
+}
+
+function clampColumnSplitPercent(value: number): number {
+  return Math.min(70, Math.max(30, Math.round(value)));
 }
 
 function compareDueDate(a: string, b: string): number {
@@ -540,6 +568,11 @@ function normalizeSettings(parsed: unknown): AppSettings {
     autosaveEnabled?: unknown;
     autosaveSeconds?: unknown;
     showAutosaveToast?: unknown;
+    layoutEditMode?: unknown;
+    dashboardColumns?: unknown;
+    columnSplitPercent?: unknown;
+    leftSectionOrder?: unknown;
+    rightSectionOrder?: unknown;
   };
 
   const interval =
@@ -547,10 +580,34 @@ function normalizeSettings(parsed: unknown): AppSettings {
       ? clampAutosaveSeconds(Math.round(value.autosaveSeconds))
       : defaultSettings.autosaveSeconds;
 
+  const normalizeSectionOrder = <T extends string>(raw: unknown, defaults: T[]): T[] => {
+    if (!Array.isArray(raw)) {
+      return [...defaults];
+    }
+    const unique = raw.filter((entry, index, arr): entry is T => typeof entry === "string" && arr.indexOf(entry) === index);
+    const allowed = unique.filter((entry): entry is T => defaults.includes(entry as T));
+    const missing = defaults.filter((entry) => !allowed.includes(entry));
+    if (allowed.length + missing.length !== defaults.length) {
+      return [...defaults];
+    }
+    return [...allowed, ...missing];
+  };
+
+  const dashboardColumns = value.dashboardColumns === 1 || value.dashboardColumns === 2 ? value.dashboardColumns : 2;
+  const columnSplitPercent =
+    typeof value.columnSplitPercent === "number" && Number.isFinite(value.columnSplitPercent)
+      ? clampColumnSplitPercent(value.columnSplitPercent)
+      : defaultSettings.columnSplitPercent;
+
   return {
     autosaveEnabled: typeof value.autosaveEnabled === "boolean" ? value.autosaveEnabled : defaultSettings.autosaveEnabled,
     autosaveSeconds: interval,
     showAutosaveToast: typeof value.showAutosaveToast === "boolean" ? value.showAutosaveToast : defaultSettings.showAutosaveToast,
+    layoutEditMode: typeof value.layoutEditMode === "boolean" ? value.layoutEditMode : defaultSettings.layoutEditMode,
+    dashboardColumns,
+    columnSplitPercent,
+    leftSectionOrder: normalizeSectionOrder(value.leftSectionOrder, DEFAULT_LEFT_SECTION_ORDER),
+    rightSectionOrder: normalizeSectionOrder(value.rightSectionOrder, DEFAULT_RIGHT_SECTION_ORDER),
   };
 }
 
@@ -908,6 +965,68 @@ export default function Home() {
       note: nextCollapsed,
     });
   }, [allSectionsCollapsed]);
+
+  const leftOrderIndex = useMemo(
+    () => settings.leftSectionOrder.reduce<Record<Extract<SectionKey, "vision" | "goals">, number>>(
+      (acc, section, index) => {
+        acc[section] = index;
+        return acc;
+      },
+      { vision: 0, goals: 1 }
+    ),
+    [settings.leftSectionOrder]
+  );
+
+  const rightOrderIndex = useMemo(
+    () => settings.rightSectionOrder.reduce<Record<Extract<SectionKey, "projects" | "today" | "note">, number>>(
+      (acc, section, index) => {
+        acc[section] = index;
+        return acc;
+      },
+      { projects: 0, today: 1, note: 2 }
+    ),
+    [settings.rightSectionOrder]
+  );
+
+  const dashboardGridClassName = settings.dashboardColumns === 2 ? "grid gap-6 lg:grid-cols-[var(--dashboard-columns)]" : "grid gap-6";
+  const dashboardGridStyle = useMemo<CSSProperties | undefined>(() => {
+    if (settings.dashboardColumns !== 2) {
+      return undefined;
+    }
+    return {
+      "--dashboard-columns": `${settings.columnSplitPercent}fr ${100 - settings.columnSplitPercent}fr`,
+    } as CSSProperties;
+  }, [settings.columnSplitPercent, settings.dashboardColumns]);
+
+  const moveSection = useCallback((section: SectionKey, direction: "up" | "down") => {
+    setSettings((prev) => {
+      if (section === "vision" || section === "goals") {
+        const order = [...prev.leftSectionOrder];
+        const currentIndex = order.indexOf(section);
+        if (currentIndex < 0) {
+          return prev;
+        }
+        const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+        if (targetIndex < 0 || targetIndex >= order.length) {
+          return prev;
+        }
+        [order[currentIndex], order[targetIndex]] = [order[targetIndex], order[currentIndex]];
+        return { ...prev, leftSectionOrder: order };
+      }
+
+      const order = [...prev.rightSectionOrder];
+      const currentIndex = order.indexOf(section as Extract<SectionKey, "projects" | "today" | "note">);
+      if (currentIndex < 0) {
+        return prev;
+      }
+      const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+      if (targetIndex < 0 || targetIndex >= order.length) {
+        return prev;
+      }
+      [order[currentIndex], order[targetIndex]] = [order[targetIndex], order[currentIndex]];
+      return { ...prev, rightSectionOrder: order };
+    });
+  }, []);
 
   const preventEnterSubmit = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -1942,6 +2061,66 @@ export default function Home() {
                     show autosave toasts
                   </Switch>
 
+                  <Switch
+                    isSelected={settings.layoutEditMode}
+                    onValueChange={(value) => setSettings((prev) => ({ ...prev, layoutEditMode: value }))}
+                    classNames={{ label: "text-zinc-200" }}
+                  >
+                    layout edit mode
+                  </Switch>
+
+                  <Select
+                    label="desktop columns"
+                    labelPlacement="outside"
+                    variant="bordered"
+                    selectedKeys={[String(settings.dashboardColumns)]}
+                    renderValue={(items) => (
+                      <span className="text-zinc-100">{items.map((item) => item.textValue).join(", ")}</span>
+                    )}
+                    onSelectionChange={(keys) => {
+                      const selected = Array.from(keys as Set<string>)[0]?.toString();
+                      if (selected === "1" || selected === "2") {
+                        setSettings((prev) => ({ ...prev, dashboardColumns: Number.parseInt(selected, 10) as 1 | 2 }));
+                      }
+                    }}
+                    classNames={{
+                      trigger: "bg-zinc-950 text-zinc-100 border-zinc-700 data-[hover=true]:border-zinc-500",
+                      value: "text-zinc-100",
+                      label: "text-zinc-400",
+                      selectorIcon: "text-zinc-400",
+                      listboxWrapper: "bg-zinc-900 text-zinc-100",
+                      popoverContent: "bg-zinc-900 border border-zinc-700",
+                    }}
+                  >
+                    <SelectItem key="1" className="text-zinc-100">one column</SelectItem>
+                    <SelectItem key="2" className="text-zinc-100">two columns</SelectItem>
+                  </Select>
+
+                  {settings.dashboardColumns === 2 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">column split</p>
+                        <span className="text-xs text-zinc-500">
+                          {settings.columnSplitPercent}% / {100 - settings.columnSplitPercent}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={30}
+                        max={70}
+                        step={1}
+                        value={settings.columnSplitPercent}
+                        onChange={(event) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            columnSplitPercent: clampColumnSplitPercent(Number.parseInt(event.target.value, 10)),
+                          }))
+                        }
+                        className="w-full accent-cyan-400"
+                      />
+                    </div>
+                  )}
+
                   <div className="space-y-2 border-t border-zinc-800 pt-3">
                     <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">data transfer</p>
                     <div className="flex flex-wrap gap-2">
@@ -1989,14 +2168,14 @@ export default function Home() {
           </div>
         </motion.div>
 
-        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className={dashboardGridClassName} style={dashboardGridStyle}>
           <motion.div
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, delay: 0.08, ease: "easeOut" }}
-            className="space-y-6"
+            className="flex flex-col gap-6"
           >
-            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100" style={{ order: leftOrderIndex.vision }}>
               <CardHeader className="py-4">
                 <div className="flex w-full items-start justify-between gap-3">
                   <div>
@@ -2012,6 +2191,28 @@ export default function Home() {
                     >
                       {visionEditMode ? "edit mode" : "view mode"}
                     </Button>
+                    {settings.layoutEditMode && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={leftOrderIndex.vision === 0}
+                          onPress={() => moveSection("vision", "up")}
+                        >
+                          up
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={leftOrderIndex.vision === settings.leftSectionOrder.length - 1}
+                          onPress={() => moveSection("vision", "down")}
+                        >
+                          down
+                        </Button>
+                      </>
+                    )}
                     <Button
                       size="sm"
                       variant="light"
@@ -2105,7 +2306,7 @@ export default function Home() {
               )}
             </Card>
 
-            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100" style={{ order: leftOrderIndex.goals }}>
               <CardHeader className="py-4">
                 <div className="flex w-full items-start justify-between gap-3">
                   <div>
@@ -2121,6 +2322,28 @@ export default function Home() {
                     >
                       {goalsEditMode ? "edit mode" : "view mode"}
                     </Button>
+                    {settings.layoutEditMode && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={leftOrderIndex.goals === 0}
+                          onPress={() => moveSection("goals", "up")}
+                        >
+                          up
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={leftOrderIndex.goals === settings.leftSectionOrder.length - 1}
+                          onPress={() => moveSection("goals", "down")}
+                        >
+                          down
+                        </Button>
+                      </>
+                    )}
                     <Button
                       size="sm"
                       variant="light"
@@ -2720,7 +2943,7 @@ export default function Home() {
             transition={{ duration: 0.45, delay: 0.15, ease: "easeOut" }}
             className="flex flex-col gap-6"
           >
-            <Card className="order-2 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100" style={{ order: rightOrderIndex.projects }}>
               <CardHeader className="py-4">
                 <div className="flex w-full items-start justify-between gap-3">
                   <div>
@@ -2736,6 +2959,28 @@ export default function Home() {
                     >
                       {projectsEditMode ? "edit mode" : "view mode"}
                     </Button>
+                    {settings.layoutEditMode && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={rightOrderIndex.projects === 0}
+                          onPress={() => moveSection("projects", "up")}
+                        >
+                          up
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={rightOrderIndex.projects === settings.rightSectionOrder.length - 1}
+                          onPress={() => moveSection("projects", "down")}
+                        >
+                          down
+                        </Button>
+                      </>
+                    )}
                     <Button
                       size="sm"
                       variant="light"
@@ -3378,7 +3623,7 @@ export default function Home() {
               )}
             </Card>
 
-            <Card className="order-1 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100" style={{ order: rightOrderIndex.today }}>
               <CardHeader className="py-4">
                 <div className="flex w-full items-start justify-between gap-3">
                   <div>
@@ -3394,6 +3639,28 @@ export default function Home() {
                     >
                       {todayEditMode ? "edit mode" : "view mode"}
                     </Button>
+                    {settings.layoutEditMode && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={rightOrderIndex.today === 0}
+                          onPress={() => moveSection("today", "up")}
+                        >
+                          up
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="light"
+                          className="text-zinc-400"
+                          isDisabled={rightOrderIndex.today === settings.rightSectionOrder.length - 1}
+                          onPress={() => moveSection("today", "down")}
+                        >
+                          down
+                        </Button>
+                      </>
+                    )}
                     <Button
                       size="sm"
                       variant="light"
@@ -3553,13 +3820,35 @@ export default function Home() {
               )}
             </Card>
 
-            <Card className="order-3 border border-zinc-800 bg-zinc-900/80 text-zinc-100">
+            <Card className="border border-zinc-800 bg-zinc-900/80 text-zinc-100" style={{ order: rightOrderIndex.note }}>
               <CardHeader className="py-4">
                 <div className="flex w-full items-start justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-medium">system note</h2>
                     <p className="mt-1 text-sm text-zinc-400">keep your execution loop tight</p>
                   </div>
+                  {settings.layoutEditMode && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="light"
+                        className="text-zinc-400"
+                        isDisabled={rightOrderIndex.note === 0}
+                        onPress={() => moveSection("note", "up")}
+                      >
+                        up
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="light"
+                        className="text-zinc-400"
+                        isDisabled={rightOrderIndex.note === settings.rightSectionOrder.length - 1}
+                        onPress={() => moveSection("note", "down")}
+                      >
+                        down
+                      </Button>
+                    </>
+                  )}
                   <Button
                     size="sm"
                     variant="light"
