@@ -13,10 +13,14 @@ import {
 import {
   LEGACY_SETTINGS_STORAGE_KEY,
   LEGACY_STORAGE_KEY,
+  getStorageMigrationStatus,
   loadPersistedData,
   loadPersistedSettings,
+  migrateLegacyPayloadIntoNormalizedStorage,
   persistData as persistDataToDb,
   persistSettings as persistSettingsToDb,
+  rollbackLatestMigration,
+  type StorageMigrationStatus,
 } from "@/lib/browser-storage";
 import SubGoalItem from "@/components/SubGoalItem";
 
@@ -854,6 +858,8 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string>("");
   const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState<StorageMigrationStatus | null>(null);
+  const [migrationActionPending, setMigrationActionPending] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>(null);
   const [visionEditMode, setVisionEditMode] = useState(false);
   const [activeVisionArea, setActiveVisionArea] = useState<LifeArea | null>(null);
@@ -914,33 +920,42 @@ export default function Home() {
 
     const loadInitialState = async () => {
       try {
-        const [rawDataFromDb, rawSettingsFromDb] = await Promise.all([loadPersistedData(), loadPersistedSettings()]);
-        const rawData = rawDataFromDb ?? localStorage.getItem(LEGACY_STORAGE_KEY);
-        const rawSettings = rawSettingsFromDb ?? localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY);
+        let [rawDataFromDb, rawSettingsFromDb] = await Promise.all([loadPersistedData(), loadPersistedSettings()]);
+        const rawDataFromLegacyLocalStorage = localStorage.getItem(LEGACY_STORAGE_KEY);
+        const rawSettingsFromLegacyLocalStorage = localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY);
+
+        if (!rawDataFromDb && rawDataFromLegacyLocalStorage) {
+          await migrateLegacyPayloadIntoNormalizedStorage(
+            rawDataFromLegacyLocalStorage,
+            rawSettingsFromLegacyLocalStorage,
+            "localstorage-fallback-migration"
+          );
+          [rawDataFromDb, rawSettingsFromDb] = await Promise.all([loadPersistedData(), loadPersistedSettings()]);
+        }
+
+        const rawData = rawDataFromDb ?? rawDataFromLegacyLocalStorage;
+        const rawSettings = rawSettingsFromDb ?? rawSettingsFromLegacyLocalStorage;
 
         const loadedData = rawData ? normalizeData(JSON.parse(rawData) as unknown) : defaultData;
         const loadedSettings = rawSettings ? normalizeSettings(JSON.parse(rawSettings) as unknown) : defaultSettings;
+        const status = await getStorageMigrationStatus();
 
         if (!cancelled) {
           setData(loadedData);
           dataRef.current = loadedData;
           setLastSavedSnapshot(JSON.stringify(loadedData));
           setSettings(loadedSettings);
+          setMigrationStatus(status);
         }
 
-        if (!rawDataFromDb && rawData) {
-          void persistDataToDb(JSON.stringify(loadedData));
-        }
-
-        if (!rawSettingsFromDb && rawSettings) {
-          void persistSettingsToDb(JSON.stringify(loadedSettings));
-        }
+        void persistSettingsToDb(JSON.stringify(loadedSettings));
       } catch {
         if (!cancelled) {
           setData(defaultData);
           dataRef.current = defaultData;
           setLastSavedSnapshot(JSON.stringify(defaultData));
           setSettings(defaultSettings);
+          setMigrationStatus(null);
         }
       } finally {
         if (!cancelled) {
@@ -1391,6 +1406,54 @@ export default function Home() {
       setToastMessage("backup imported");
     } catch {
       setToastMessage("import failed. use a valid .json backup.");
+    }
+  };
+
+  const rollbackStorageMigration = async () => {
+    if (!migrationStatus?.hasRollbackBackup || migrationActionPending) {
+      return;
+    }
+
+    const confirmed = window.confirm("roll back storage to the previous migration backup?");
+    if (!confirmed) {
+      return;
+    }
+
+    setMigrationActionPending(true);
+    try {
+      const rolledBack = await rollbackLatestMigration();
+      if (!rolledBack) {
+        setToastMessage("no rollback backup found");
+        return;
+      }
+
+      const [rawData, rawSettings, status] = await Promise.all([
+        loadPersistedData(),
+        loadPersistedSettings(),
+        getStorageMigrationStatus(),
+      ]);
+      const nextData = rawData ? normalizeData(JSON.parse(rawData) as unknown) : defaultData;
+      const nextSettings = rawSettings ? normalizeSettings(JSON.parse(rawSettings) as unknown) : defaultSettings;
+      const serialized = JSON.stringify(nextData);
+
+      setData(nextData);
+      dataRef.current = nextData;
+      setSettings(nextSettings);
+      setLastSavedSnapshot(serialized);
+      setLastSavedAt(
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+      setMigrationStatus(status);
+      setAutosaveQueued(false);
+      setAutosaveInProgress(false);
+      setToastMessage("storage rollback complete");
+    } catch {
+      setToastMessage("storage rollback failed");
+    } finally {
+      setMigrationActionPending(false);
     }
   };
 
@@ -1894,6 +1957,30 @@ export default function Home() {
                         import data
                       </Button>
                     </div>
+                  </div>
+
+                  <div className="space-y-2 border-t border-zinc-800 pt-3">
+                    <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">storage migration</p>
+                    <p className="text-xs text-zinc-400">
+                      schema v{migrationStatus?.schemaVersion ?? 2}
+                      {migrationStatus?.lastMigrationAt
+                        ? ` • ${new Date(migrationStatus.lastMigrationAt).toLocaleString()}`
+                        : ""}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {migrationStatus?.lastMigrationSource
+                        ? `last source: ${migrationStatus.lastMigrationSource}`
+                        : "no migration metadata yet"}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      className="bg-zinc-800 text-zinc-200"
+                      isDisabled={!migrationStatus?.hasRollbackBackup || migrationActionPending}
+                      onPress={rollbackStorageMigration}
+                    >
+                      {migrationActionPending ? "rolling back..." : "rollback last migration"}
+                    </Button>
                   </div>
                 </div>
               )}
