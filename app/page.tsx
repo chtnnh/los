@@ -1145,10 +1145,30 @@ export default function Home() {
     return visionCount + goalCount + projectCount + otherCount;
   }, [data]);
 
+  const projectAreaTagsById = useMemo(() => {
+    const map = new Map<string, LifeArea[]>();
+    data.projects.forEach((project) => {
+      map.set(project.id, project.areaTags);
+    });
+    return map;
+  }, [data.projects]);
+
+  const getGoalEffectiveAreaTags = useCallback(
+    (goal: GoalEntry): LifeArea[] => {
+      const tags = new Set<LifeArea>(goal.areaTags);
+      goal.projectIds.forEach((projectId) => {
+        const projectAreas = projectAreaTagsById.get(projectId) ?? [];
+        projectAreas.forEach((area) => tags.add(area));
+      });
+      return Array.from(tags);
+    },
+    [projectAreaTagsById]
+  );
+
   const filteredGoalItems = useMemo(() => {
     const matchesFilter = (goal: GoalEntry) => {
       const areaMatch =
-        filters.areaTags.length === 0 || filters.areaTags.some((filterTag) => goal.areaTags.includes(filterTag));
+        filters.areaTags.length === 0 || filters.areaTags.some((filterTag) => getGoalEffectiveAreaTags(goal).includes(filterTag));
       const projectMatch =
         filters.projectIds.length === 0 || filters.projectIds.some((filterTag) => goal.projectIds.includes(filterTag));
       return areaMatch && projectMatch;
@@ -1199,7 +1219,7 @@ export default function Home() {
     });
 
     return items;
-  }, [data.goals, filters, goalSort]);
+  }, [data.goals, filters, getGoalEffectiveAreaTags, goalSort]);
 
   const allGoals = useMemo(
     () => (Object.keys(GOAL_LABELS) as GoalType[]).flatMap((kind) => data.goals[kind]),
@@ -1209,7 +1229,7 @@ export default function Home() {
   const areaProgressByArea = useMemo(
     () =>
       (Object.keys(AREA_LABELS) as LifeArea[]).reduce<Record<LifeArea, AreaProgressStats>>((acc, area) => {
-        const linkedGoals = allGoals.filter((goal) => goal.areaTags.includes(area));
+        const linkedGoals = allGoals.filter((goal) => getGoalEffectiveAreaTags(goal).includes(area));
         const goalsCount = linkedGoals.length;
         const completedGoals = linkedGoals.filter((goal) => goal.completed).length;
         const completionFraction =
@@ -1223,7 +1243,7 @@ export default function Home() {
         };
         return acc;
       }, {} as Record<LifeArea, AreaProgressStats>),
-    [allGoals, data.projects]
+    [allGoals, data.projects, getGoalEffectiveAreaTags]
   );
 
   const projectProgressById = useMemo(
@@ -2599,7 +2619,7 @@ export default function Home() {
                                           {TIMELINE_LABELS[goal.timeline]}
                                         </Chip>
                                       )}
-                                      {goal.areaTags.map((area) => (
+                                      {getGoalEffectiveAreaTags(goal).map((area) => (
                                         <Chip key={`${goal.id}-view-area-${area}`} variant="flat" className={AREA_TAG_CLASSES[area]}>
                                           {AREA_LABELS[area]}
                                         </Chip>
@@ -2955,7 +2975,15 @@ export default function Home() {
                       size="sm"
                       variant="flat"
                       className={projectsEditMode ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" : "bg-zinc-800 text-zinc-300"}
-                      onPress={() => setProjectsEditMode((prev) => !prev)}
+                      onPress={() =>
+                        setProjectsEditMode((prev) => {
+                          const next = !prev;
+                          if (!next) {
+                            setShowProjectForm(false);
+                          }
+                          return next;
+                        })
+                      }
                     >
                       {projectsEditMode ? "edit mode" : "view mode"}
                     </Button>
@@ -3270,9 +3298,9 @@ export default function Home() {
                       goalsCount: 0,
                       completionPercent: 0,
                     };
-                    const isProjectEditing = projectsEditMode || activeProjectEditorId === project.id;
+                    const isProjectEditing = activeProjectEditorId === project.id;
                     const handleProjectCardClick = (event: MouseEvent<HTMLElement>) => {
-                      if (projectsEditMode || isProjectEditing) {
+                      if (isProjectEditing) {
                         return;
                       }
                       const target = event.target as HTMLElement;
@@ -3295,7 +3323,7 @@ export default function Home() {
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            {!projectsEditMode && isProjectEditing && (
+                            {isProjectEditing && (
                               <Button
                                 size="sm"
                                 variant="light"
