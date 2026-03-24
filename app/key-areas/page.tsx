@@ -3,19 +3,54 @@
 import Link from "next/link";
 import { Button, Card, CardBody, CardHeader, Chip, Progress, Textarea } from "@heroui/react";
 import { useEffect, useMemo, useState } from "react";
-import { AREA_LABELS, AREA_TAG_CLASSES, defaultLifeData, loadLifeDataFromStorage, saveLifeDataToStorage, type LifeArea } from "@/lib/life-os-storage";
+import { loadPersistedData, persistData as persistDataToDb } from "@/lib/browser-storage";
+import { AREA_LABELS, AREA_TAG_CLASSES, defaultLifeData, normalizeLifeData, type LifeArea } from "@/lib/life-os-storage";
 
 export default function KeyAreasPage() {
   const [data, setData] = useState(defaultLifeData);
+  const [collapsedByArea, setCollapsedByArea] = useState<Record<LifeArea, boolean>>({
+    health: false,
+    work: false,
+    relationships: false,
+    financial: false,
+    learning: false,
+    soul: false,
+  });
 
   useEffect(() => {
+    let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
-      setData(loadLifeDataFromStorage());
+      void (async () => {
+        const raw = await loadPersistedData();
+        const nextData = raw ? normalizeLifeData(JSON.parse(raw) as unknown) : defaultLifeData;
+        if (!cancelled) {
+          setData(nextData);
+        }
+      })();
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   const areas = useMemo(() => Object.keys(AREA_LABELS) as LifeArea[], []);
+  const projectAreaTagsById = useMemo(() => {
+    const map = new Map<string, LifeArea[]>();
+    data.projects.forEach((project) => {
+      map.set(project.id, project.areaTags);
+    });
+    return map;
+  }, [data.projects]);
+
+  const getGoalEffectiveAreaTags = (goal: (typeof data.goals.daily)[number]) => {
+    const tags = new Set<LifeArea>(goal.areaTags);
+    goal.projectIds.forEach((projectId) => {
+      const projectAreas = projectAreaTagsById.get(projectId) ?? [];
+      projectAreas.forEach((projectArea) => tags.add(projectArea));
+    });
+    return Array.from(tags);
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-100 sm:px-8 sm:py-10 font-[family-name:var(--font-space-grotesk)]">
@@ -29,7 +64,7 @@ export default function KeyAreasPage() {
             <Button
               variant="flat"
               className="bg-teal-500/20 text-teal-300"
-              onPress={() => saveLifeDataToStorage(data)}
+              onPress={() => void persistDataToDb(JSON.stringify(data))}
             >
               save
             </Button>
@@ -39,11 +74,11 @@ export default function KeyAreasPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {areas.map((area) => {
-            const linkedGoals = [...data.goals.daily, ...data.goals.weekly, ...data.goals.monthly].filter((goal) =>
-              goal.areaTags.includes(area),
-            );
+            const linkedGoals = [...data.goals.daily, ...data.goals.weekly, ...data.goals.monthly].filter((goal) => {
+              return getGoalEffectiveAreaTags(goal).includes(area);
+            });
             const goalsCount = linkedGoals.length;
             const completedGoals = linkedGoals.filter((goal) => goal.completed).length;
             const completionPercent = goalsCount === 0 ? 0 : Math.round((completedGoals / goalsCount) * 100);
@@ -53,13 +88,27 @@ export default function KeyAreasPage() {
 
             return (
               <Card key={area} className="border border-zinc-800 bg-zinc-900/80 text-zinc-100">
-                <CardHeader className="pb-1">
-                  <div className="flex items-center gap-2">
+                <CardHeader className={collapsedByArea[area] ? "pb-3" : "pb-1"}>
+                  <div className="flex w-full items-center justify-between gap-2">
                     <Chip size="sm" variant="flat" className={AREA_TAG_CLASSES[area]}>
                       {AREA_LABELS[area]}
                     </Chip>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      className="text-zinc-400"
+                      onPress={() =>
+                        setCollapsedByArea((prev) => ({
+                          ...prev,
+                          [area]: !prev[area],
+                        }))
+                      }
+                    >
+                      {collapsedByArea[area] ? "expand" : "collapse"}
+                    </Button>
                   </div>
                 </CardHeader>
+                {!collapsedByArea[area] && (
                 <CardBody className="space-y-3 pt-1">
                   <p className="min-h-16 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 text-sm leading-relaxed text-zinc-300">
                     {data.visions[area].trim() || "no vision written yet."}
@@ -145,6 +194,7 @@ export default function KeyAreasPage() {
                     </div>
                   )}
                 </CardBody>
+                )}
               </Card>
             );
           })}
