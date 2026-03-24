@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Button, Card, CardBody, CardHeader, Chip, Input, Progress, Select, SelectItem, Textarea } from "@heroui/react";
 import { useEffect, useMemo, useState } from "react";
+import { loadPersistedData, persistData as persistDataToDb } from "@/lib/browser-storage";
 import {
   AREA_LABELS,
   AREA_TAG_CLASSES,
@@ -11,8 +12,7 @@ import {
   TIMELINE_LABELS,
   TIMELINE_TAG_CLASS,
   defaultLifeData,
-  loadLifeDataFromStorage,
-  saveLifeDataToStorage,
+  normalizeLifeData,
   type LifeArea,
   type PriorityTag,
   type TimelineTag,
@@ -24,21 +24,31 @@ export default function ProjectsPage() {
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
-      const loaded = loadLifeDataFromStorage();
-      setData(loaded);
+      void (async () => {
+        const raw = await loadPersistedData();
+        const loaded = raw ? normalizeLifeData(JSON.parse(raw) as unknown) : defaultLifeData;
+        if (cancelled) {
+          return;
+        }
+        setData(loaded);
 
-      const requestedProjectId = new URLSearchParams(window.location.search).get("projectId")?.trim() ?? "";
-      if (requestedProjectId && loaded.projects.some((project) => project.id === requestedProjectId)) {
-        setSelectedProjectId(requestedProjectId);
-        return;
-      }
+        const requestedProjectId = new URLSearchParams(window.location.search).get("projectId")?.trim() ?? "";
+        if (requestedProjectId && loaded.projects.some((project) => project.id === requestedProjectId)) {
+          setSelectedProjectId(requestedProjectId);
+          return;
+        }
 
-      if (loaded.projects[0]?.id) {
-        setSelectedProjectId(loaded.projects[0].id);
-      }
+        if (loaded.projects[0]?.id) {
+          setSelectedProjectId(loaded.projects[0].id);
+        }
+      })();
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   const selectedProject = useMemo(
@@ -145,7 +155,7 @@ export default function ProjectsPage() {
                   variant="flat"
                   className="bg-teal-500/20 text-teal-300"
                   isDisabled={!selectedProject}
-                  onPress={() => saveLifeDataToStorage(data)}
+                  onPress={() => void persistDataToDb(JSON.stringify(data))}
                 >
                   save project
                 </Button>

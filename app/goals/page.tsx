@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Button, Card, CardBody, CardHeader, Chip, Input, Progress, Select, SelectItem, Textarea } from "@heroui/react";
 import { useEffect, useMemo, useState } from "react";
+import { loadPersistedData, persistData as persistDataToDb } from "@/lib/browser-storage";
 import {
   AREA_LABELS,
   AREA_TAG_CLASSES,
@@ -14,9 +15,8 @@ import {
   createEmptySubGoal,
   createId,
   defaultLifeData,
+  normalizeLifeData,
   syncGoalCompletedWithSubGoals,
-  loadLifeDataFromStorage,
-  saveLifeDataToStorage,
   type GoalEntry,
   type GoalType,
   type LifeArea,
@@ -39,27 +39,37 @@ export default function GoalsPage() {
   const [editingSubGoalId, setEditingSubGoalId] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
-      const loaded = loadLifeDataFromStorage();
-      setData(loaded);
+      void (async () => {
+        const raw = await loadPersistedData();
+        const loaded = raw ? normalizeLifeData(JSON.parse(raw) as unknown) : defaultLifeData;
+        if (cancelled) {
+          return;
+        }
+        setData(loaded);
 
-      const requestedGoalRef = new URLSearchParams(window.location.search).get("goalRef")?.trim() ?? "";
-      const availableGoalRefs = (["daily", "weekly", "monthly"] as const).flatMap((goalType) =>
-        loaded.goals[goalType].map((goal) => `${goalType}:${goal.id}`),
-      );
-      if (requestedGoalRef && availableGoalRefs.includes(requestedGoalRef)) {
-        setSelectedGoalRef(requestedGoalRef);
-        return;
-      }
+        const requestedGoalRef = new URLSearchParams(window.location.search).get("goalRef")?.trim() ?? "";
+        const availableGoalRefs = (["daily", "weekly", "monthly"] as const).flatMap((goalType) =>
+          loaded.goals[goalType].map((goal) => `${goalType}:${goal.id}`),
+        );
+        if (requestedGoalRef && availableGoalRefs.includes(requestedGoalRef)) {
+          setSelectedGoalRef(requestedGoalRef);
+          return;
+        }
 
-      const firstGoal = loaded.goals.daily[0] ?? loaded.goals.weekly[0] ?? loaded.goals.monthly[0];
-      if (firstGoal) {
-        const firstType: GoalType =
-          loaded.goals.daily[0]?.id === firstGoal.id ? "daily" : loaded.goals.weekly[0]?.id === firstGoal.id ? "weekly" : "monthly";
-        setSelectedGoalRef(`${firstType}:${firstGoal.id}`);
-      }
+        const firstGoal = loaded.goals.daily[0] ?? loaded.goals.weekly[0] ?? loaded.goals.monthly[0];
+        if (firstGoal) {
+          const firstType: GoalType =
+            loaded.goals.daily[0]?.id === firstGoal.id ? "daily" : loaded.goals.weekly[0]?.id === firstGoal.id ? "weekly" : "monthly";
+          setSelectedGoalRef(`${firstType}:${firstGoal.id}`);
+        }
+      })();
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   const allGoals = useMemo<GoalWithType[]>(
@@ -225,7 +235,7 @@ export default function GoalsPage() {
                   variant="flat"
                   className="bg-teal-500/20 text-teal-300"
                   isDisabled={!selectedGoal}
-                  onPress={() => saveLifeDataToStorage(data)}
+                  onPress={() => void persistDataToDb(JSON.stringify(data))}
                 >
                   save goal
                 </Button>
