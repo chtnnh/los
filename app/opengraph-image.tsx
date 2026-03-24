@@ -3,7 +3,6 @@ import { ImageResponse } from "next/og";
 export const alt = "life OS";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
-export const runtime = "edge";
 
 export default async function OgImage() {
   return new ImageResponse(
@@ -16,8 +15,9 @@ export default async function OgImage() {
         alignItems: "flex-start",
         justifyContent: "space-between",
         padding: "56px 64px",
-        background:
-          "radial-gradient(circle at top right, rgba(6,182,212,0.25), transparent 40%), radial-gradient(circle at bottom left, rgba(16,185,129,0.2), transparent 35%), #09090b",
+        backgroundColor: "#09090b",
+        backgroundImage:
+          "radial-gradient(circle at top right, rgba(6,182,212,0.25), transparent 40%), radial-gradient(circle at bottom left, rgba(16,185,129,0.2), transparent 35%)",
         color: "#fff",
       }}
     >
@@ -66,7 +66,7 @@ export default async function OgImage() {
           color: "rgba(161,161,170,0.9)",
         }}
       >
-        makesomething.so
+        life operating system
       </div>
     </div>,
     { ...size },

@@ -43,14 +43,16 @@ const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
 });
 
+const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
 export const metadata: Metadata = {
   title: "carbon's life operating system",
   description: "align vision, goals, projects, and daily focus in one system.",
-  metadataBase: new URL("https://makesomething.so"),
+  metadataBase: new URL(appUrl),
   openGraph: {
     title: "carbon's life operating system",
     description: "align vision, goals, projects, and daily focus in one system.",
-    siteName: "makesomething",
+    siteName: "life operating system",
     images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "life OS" }],
   },
   twitter: {
