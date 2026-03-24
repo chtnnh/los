@@ -51,11 +51,13 @@ export const metadata: Metadata = {
     title: "carbon's life operating system",
     description: "align vision, goals, projects, and daily focus in one system.",
     siteName: "makesomething",
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "life OS" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "carbon's life operating system",
     description: "align vision, goals, projects, and daily focus in one system.",
+    images: ["/opengraph-image"],
   },
 };
 
