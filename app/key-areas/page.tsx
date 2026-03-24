@@ -8,6 +8,7 @@ import { AREA_LABELS, AREA_TAG_CLASSES, defaultLifeData, normalizeLifeData, type
 
 export default function KeyAreasPage() {
   const [data, setData] = useState(defaultLifeData);
+  const [toastMessage, setToastMessage] = useState("");
   const [collapsedByArea, setCollapsedByArea] = useState<Record<LifeArea, boolean>>({
     health: false,
     work: false,
@@ -52,8 +53,76 @@ export default function KeyAreasPage() {
     return Array.from(tags);
   };
 
+  const openAttachment = (rawUrl: string) => {
+    const normalizeLocalFilePathToUrl = (path: string) => {
+      const normalized = path.replace(/\\/g, "/");
+      if (/^[a-zA-Z]:\//.test(normalized)) {
+        return `file:///${encodeURI(normalized)}`;
+      }
+      return `file://${encodeURI(normalized)}`;
+    };
+
+    const openUrl = (url: string) => {
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        if (url.startsWith("file://")) {
+          window.location.assign(url);
+          return;
+        }
+        setToastMessage("popup blocked. allow popups for this site.");
+      }
+    };
+
+    const value = rawUrl.trim();
+    if (!value) {
+      setToastMessage("attachment is empty");
+      return;
+    }
+
+    if (value.startsWith("https://") || value.startsWith("http://") || value.startsWith("data:")) {
+      openUrl(value);
+      return;
+    }
+
+    if (value.startsWith("file://")) {
+      const normalizedFileUrl = value.startsWith("file:///")
+        ? value
+        : `file:///${value.replace(/^file:\/+/, "")}`;
+      openUrl(normalizedFileUrl);
+      return;
+    }
+
+    if (value.startsWith("local-file://")) {
+      const guessedPath = decodeURIComponent(value.replace("local-file://", ""));
+      openUrl(normalizeLocalFilePathToUrl(guessedPath.replace(/^\/+/, "")));
+      return;
+    }
+
+    if (value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value)) {
+      openUrl(normalizeLocalFilePathToUrl(value));
+      return;
+    }
+
+    setToastMessage("this attachment format can’t be opened yet");
+  };
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setToastMessage("");
+    }, 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [toastMessage]);
+
   return (
     <div className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-100 sm:px-8 sm:py-10 font-[family-name:var(--font-space-grotesk)]">
+      {toastMessage && (
+        <div className="fixed bottom-5 right-5 z-50 rounded-xl border border-teal-500/40 bg-zinc-900 px-4 py-2 text-sm text-teal-200 shadow-lg">
+          {toastMessage}
+        </div>
+      )}
       <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -175,15 +244,14 @@ export default function KeyAreasPage() {
                                 <p className="text-xs text-zinc-500">attachments</p>
                                 <div className="flex flex-wrap gap-1.5">
                                   {project.attachments.map((attachment) => (
-                                    <a
+                                    <button
                                       key={attachment.id}
-                                      href={attachment.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
+                                      type="button"
+                                      onClick={() => openAttachment(attachment.url)}
                                       className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200 underline decoration-zinc-600 hover:border-zinc-500"
                                     >
                                       {attachment.label}
-                                    </a>
+                                    </button>
                                   ))}
                                 </div>
                               </div>
