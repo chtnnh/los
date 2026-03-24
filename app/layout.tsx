@@ -43,26 +43,29 @@ const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
 });
 
-const appUrl =
-  process.env.NEXT_PUBLIC_APP_URL ??
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://example.com");
-const ogImageUrl = new URL("/opengraph-image", appUrl).toString();
-
 export const metadata: Metadata = {
+  metadataBase: (() => {
+    const rawUrl =
+      process.env.NEXT_PUBLIC_APP_URL ??
+      process.env.VERCEL_PROJECT_PRODUCTION_URL ??
+      process.env.VERCEL_URL ??
+      "http://localhost:3000";
+    const normalizedUrl = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
+    return new URL(normalizedUrl);
+  })(),
   title: "carbon's life operating system",
   description: "align vision, goals, projects, and daily focus in one system.",
-  metadataBase: new URL(appUrl),
   openGraph: {
     title: "carbon's life operating system",
     description: "align vision, goals, projects, and daily focus in one system.",
     siteName: "life operating system",
-    images: [{ url: ogImageUrl, width: 1200, height: 630, alt: "life OS" }],
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "life OS" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "carbon's life operating system",
     description: "align vision, goals, projects, and daily focus in one system.",
-    images: [ogImageUrl],
+    images: ["/opengraph-image"],
   },
 };
 
